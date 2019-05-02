@@ -130,7 +130,7 @@ def export_object(obcontext):
         y = (pos_world.y + 128)
         if x<0 or y<0 or x>255 or y>255:
             raise Exception('Invalid vertex: {}'.format(pos_world))
-        voxel = int(math.floor(x/8)) + 8*int(math.floor(y/8))
+        voxel = int(math.floor(x/8)) + 16*int(math.floor(y/8))
         if voxel<0 or voxel>255:
             raise Exception('Invalid voxel id: {} for {}/{}'.format(voxel,x,y))
         # find all connected faces
