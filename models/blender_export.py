@@ -4,6 +4,7 @@ import argparse
 import sys
 import math
 from mathutils import Vector, Matrix
+from collections import defaultdict
 
 argv = sys.argv
 if "--" not in argv:
@@ -25,6 +26,16 @@ charset="_0123456789abcdefghijklmnopqrstuvwxyz"
 
 def tohex(val, nbits):
     return (hex((int(round(val,0)) + (1<<nbits)) % (1<<nbits))[2:]).zfill(nbits>>2)
+
+# variable length packing (1 or 2 bytes)
+def pack_variant(x):
+    if x>0x7fff:
+      raise Exception('Unable to convert: {} into a 1 or 2 bytes'.format(x))
+    # 2 bytes
+    if x>127:
+        return "{:04x}".format(x + 0x8000)
+    # 1 byte
+    return "{:02x}".format(x)
 
 # short must be between -127/127
 def pack_short(x):
@@ -71,42 +82,76 @@ def export_object(obcontext):
     # create a map loop index -> vertex index (see: https://www.python.org/dev/peps/pep-0274/)
     loop_vert = {l.index:l.vertex_index for l in obdata.loops}
 
-    vlen = len(obdata.vertices)
     # vertices
-    s = s + "{:04x}".format(vlen)
+    s = s + pack_variant(len(obdata.vertices))
     mat_world = obcontext.matrix_world
     for v in obdata.vertices:
         pos_world = mat_world * v.co
         s = s + "{}{}{}".format(pack_short(pos_world.x), pack_short(pos_world.z), pack_short(pos_world.y))
 
+    # normals must be computed
+
     # faces
-    s = s + "{:04x}".format(len(obdata.polygons))
+    s = s + pack_variant(len(obdata.polygons))
     for i in range(len(obdata.polygons)):
         f=obdata.polygons[i]
         fs = ""
         # bit layout:
+        # quad:      5
         # dual-side: 4
         # color:     0-3
-        is_dual_sided = False          
+        is_dual_sided = False
+        color = 1
+        len_verts =len(f.loop_indices)
+        if len_verts>4:
+             raise Exception('Face: {} too many vertices: {}'.format(i,len_verts))
         if len(obcontext.material_slots)>0:
             slot = obcontext.material_slots[f.material_index]
             mat = slot.material
-            is_dual_sided = 16 if mat.game_settings.use_backface_culling==False else 0
-            fs = fs + "{:02x}".format(is_dual_sided + diffuse_to_p8color(mat.diffuse_color))
-        else:
-            fs = fs + "{:02x}".format(1) # default color
+            is_dual_sided = mat.game_settings.use_backface_culling==False
+            color = diffuse_to_p8color(mat.diffuse_color)
 
-        # + face count
-        fs = fs + "{:02x}".format(len(f.loop_indices))
+        fs = fs + "{:02x}".format(
+            (32 if len_verts==4 else 0) + 
+            (16 if is_dual_sided else 0) + 
+            color)
+
         # + vertex id (= edge loop)
         for li in f.loop_indices:
-            fs = fs + "{:02x}".format(loop_vert[li]+1)
-                
-    #normals
-    s = s + "{:02x}".format(len(obdata.polygons))
-    for f in obdata.polygons:
-        s = s + "{}{}{}".format(pack_float(f.normal.x), pack_float(f.normal.z), pack_float(f.normal.y))
+            fs = fs + pack_variant(loop_vert[li]+1)
+        # done
+        s = s + fs
     
+    # voxels
+    voxels=defaultdict(set)
+    for v in bm.verts:
+        pos_world = mat_world * v.co
+        x = (pos_world.x + 128)
+        y = (pos_world.y + 128)
+        if x<0 or y<0 or x>255 or y>255:
+            raise Exception('Invalid vertex: {}'.format(pos_world))
+        voxel = int(math.floor(x/8)) + 8*int(math.floor(y/8))
+        if voxel<0 or voxel>255:
+            raise Exception('Invalid voxel id: {} for {}/{}'.format(voxel,x,y))
+        # find all connected faces
+        # register in voxel
+        for face in v.link_faces:
+            voxels[voxel].add(face.index)
+
+    # export voxels
+    # number of cells
+    s = s + "{:02x}".format(len(voxels.keys()))
+    for k,v in voxels.items():
+        # voxel ID
+        s = s + "{:02x}".format(k)   
+        # number of faces
+        if len(v)>255:
+            raise Exception('Voxel: {}/{} has too many faces: {}'.format(voxel%16,round(k/16,0),len(v)))
+        s = s + pack_variant(len(v))
+        # face indices
+        for i in v:
+            s = s + pack_variant(i+1)
+
     return s
 
 # model data
