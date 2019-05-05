@@ -83,16 +83,14 @@ def export_object(obcontext):
     loop_vert = {l.index:l.vertex_index for l in obdata.loops}
 
     # vertices
-    s = s + pack_variant(len(obdata.vertices))
+    s += pack_variant(len(obdata.vertices))
     mat_world = obcontext.matrix_world
     for v in obdata.vertices:
         pos_world = mat_world * v.co
-        s = s + "{}{}{}".format(pack_short(pos_world.x), pack_short(pos_world.z), pack_short(pos_world.y))
-
-    # normals must be computed
+        s += "{}{}{}".format(pack_short(pos_world.x), pack_short(pos_world.z), pack_short(pos_world.y))
 
     # faces
-    s = s + pack_variant(len(bm.faces))
+    faces = []
     for f in bm.faces:
         fs = ""
         # default values
@@ -111,20 +109,31 @@ def export_object(obcontext):
         # tri/quad:  5
         # dual-side: 4
         # color:     0-3
-        fs = fs + "{:02x}".format(
+        fs += "{:02x}".format(
             (32 if len_verts==4 else 0) + 
             (16 if is_dual_sided else 0) + 
             color)
 
         # + vertex id (= edge loop)
         for l in f.loops:
-            fs = fs + pack_variant(loop_vert[l.index]+1)
+            fs += pack_variant(loop_vert[l.index]+1)
 
-        # borders
+        faces.append({'face': f, 'flip': False, 'data': fs})
+        if is_dual_sided:
+            faces.append({'face': f, 'flip': True, 'data': fs})
 
-        # done
-        s = s + fs
+    # push face data to buffer (inc. dual sided faces)
+    s += pack_variant(len(faces))
+    for f in faces:
+        s += f['data']
     
+    # normals
+    # same as face count
+    for f in faces:
+        flip = -1 if f['flip'] else 1
+        f = f['face']
+        s += "{}{}{}".format(pack_float(flip * f.normal.x), pack_float(flip * f.normal.z), pack_float(flip * f.normal.y))
+
     # voxels
     voxels=defaultdict(set)
     for v in bm.verts:
