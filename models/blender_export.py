@@ -92,33 +92,36 @@ def export_object(obcontext):
     # normals must be computed
 
     # faces
-    s = s + pack_variant(len(obdata.polygons))
-    for i in range(len(obdata.polygons)):
-        f=obdata.polygons[i]
+    s = s + pack_variant(len(bm.faces))
+    for f in bm.faces:
         fs = ""
-        # bit layout:
-        # quad:      5
-        # dual-side: 4
-        # color:     0-3
+        # default values
         is_dual_sided = False
         color = 1
-        len_verts =len(f.loop_indices)
+        len_verts = len(f.loops)
         if len_verts>4:
-             raise Exception('Face: {} too many vertices: {}'.format(i,len_verts))
+             raise Exception('Face: {} has too many vertices: {}'.format(i,len_verts))
         if len(obcontext.material_slots)>0:
             slot = obcontext.material_slots[f.material_index]
             mat = slot.material
             is_dual_sided = mat.game_settings.use_backface_culling==False
             color = diffuse_to_p8color(mat.diffuse_color)
 
+        # face flags bit layout:
+        # tri/quad:  5
+        # dual-side: 4
+        # color:     0-3
         fs = fs + "{:02x}".format(
             (32 if len_verts==4 else 0) + 
             (16 if is_dual_sided else 0) + 
             color)
 
         # + vertex id (= edge loop)
-        for li in f.loop_indices:
-            fs = fs + pack_variant(loop_vert[li]+1)
+        for l in f.loops:
+            fs = fs + pack_variant(loop_vert[l.index]+1)
+
+        # borders
+
         # done
         s = s + fs
     
@@ -130,7 +133,7 @@ def export_object(obcontext):
         y = (pos_world.y + 128)
         if x<0 or y<0 or x>255 or y>255:
             raise Exception('Invalid vertex: {}'.format(pos_world))
-        voxel = int(math.floor(x/8)) + 16*int(math.floor(y/8))
+        voxel = int(math.floor(x/16)) + 16*int(math.floor(y/16))
         if voxel<0 or voxel>255:
             raise Exception('Invalid voxel id: {} for {}/{}'.format(voxel,x,y))
         # find all connected faces
