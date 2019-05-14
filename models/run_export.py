@@ -19,7 +19,7 @@ def call(args):
 s = ""
 
 # 3d models
-file_list = ['racetrack']
+file_list = ['cube','bones','cactus','tree','rock','whale','arch']
 s = s + "{:02x}".format(len(file_list))
 for blend_file in file_list:
     print("Exporting: {}.blend".format(blend_file))
@@ -36,12 +36,12 @@ for blend_file in file_list:
         os.remove(path)
 
 # pico-8 map format
-# first 0x2000 bytes -> gfx (shared w/ map)
-# second 0x1000 bytes -> map
-if len(s)>3*8192:
-    raise Exception('Data string too long: {} / {} bytes'.format(len(s),3*8192))
+# first 4096 bytes -> gfx (shared w/ map)
+# second 4096 bytes -> map
+if len(s)>=2*8192:
+    raise Exception('Data string too long ({})'.format(len(s)))
 
-tmp=s[:2*8192]
+tmp=s[:8192]
 print("__gfx__")
 # swap bytes
 gfx_data = ""
@@ -49,7 +49,7 @@ for i in range(0,len(tmp),2):
     gfx_data = gfx_data + tmp[i+1:i+2] + tmp[i:i+1]
 print(re.sub("(.{128})", "\\1\n", gfx_data, 0, re.DOTALL))
 
-map_data=s[2*8192:]
+map_data=s[8192:]
 if len(map_data)>0:
     print("__map__")
     print(re.sub("(.{256})", "\\1\n", map_data, 0, re.DOTALL))
