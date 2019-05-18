@@ -33,9 +33,15 @@ def pack_variant(x):
       raise Exception('Unable to convert: {} into a 1 or 2 bytes'.format(x))
     # 2 bytes
     if x>127:
-        return "{:04x}".format(x + 0x8000)
+        h = "{:04x}".format(x + 0x8000)
+        if len(h)!=4:
+            raise Exception('Unable to convert: {} into a word: {}'.format(x,h))
+        return h
     # 1 byte
-    return "{:02x}".format(x)
+    h = "{:02x}".format(x)
+    if len(h)!=2:
+        raise Exception('Unable to convert: {} into a byte: {}'.format(x,h))
+    return h
 
 # short must be between -127/127
 def pack_short(x):
@@ -50,9 +56,9 @@ def pack_float(x):
     if len(h)!=2:
         raise Exception('Unable to convert: {} into a byte: {}'.format(x,h))
     return h
-# double must be between -1024/+1023 resolution: 0.03125
+# double must be between -128/+127 resolution: 0.0078
 def pack_double(x):
-    h = "{}".format(tohex(16*x+16384,16))
+    h = "{}".format(tohex(128*x+16384,16))
     if len(h)!=4:
         raise Exception('Unable to convert: {} into a word: {}'.format(x,h))
     return h
@@ -83,11 +89,11 @@ def export_object(obcontext):
     loop_vert = {l.index:l.vertex_index for l in obdata.loops}
 
     # vertices
-    s += pack_variant(len(obdata.vertices))
-    mat_world = obcontext.matrix_world
+    lens = pack_variant(len(obdata.vertices))
+    print("vertices: 0x{}".format(lens))
+    s += lens
     for v in obdata.vertices:
-        pos_world = mat_world * v.co
-        s += "{}{}{}".format(pack_double(pos_world.x), pack_double(pos_world.z), pack_double(pos_world.y))
+        s += "{}{}{}".format(pack_double(v.co.x), pack_double(v.co.z), pack_double(v.co.y))
 
     # faces
     faces = []
@@ -103,7 +109,7 @@ def export_object(obcontext):
             slot = obcontext.material_slots[f.material_index]
             mat = slot.material
             is_dual_sided = mat.game_settings.use_backface_culling==False
-            color = diffuse_to_p8color(mat.diffuse_color)
+            color = 1+(len(faces)%14) # diffuse_to_p8color(mat.diffuse_color)
 
         # face flags bit layout:
         # tri/quad:  5
@@ -115,21 +121,31 @@ def export_object(obcontext):
             color)
 
         # + vertex id (= edge loop)
+        first_v=True
         for l in f.loops:
-            fs += pack_variant(loop_vert[l.index]+1)
+            vi = loop_vert[l.index]+1
+            if vi>len(obdata.vertices):
+                raise Exception("Incorrect vertice index: {}".format(vi))
+            #if first_v:                
+            #    print("vi: {}".format(vi))
+            #    if is_dual_sided:
+            #        print("vi: {}".format(vi))
+            #    first_v=False
+            fs += pack_variant(vi)
 
         faces.append({'face': f, 'flip': False, 'data': fs})
-        if is_dual_sided:
-            faces.append({'face': f, 'flip': True, 'data': fs})
+        #if is_dual_sided:
+        #    faces.append({'face': f, 'flip': True, 'data': fs})
 
     # push face data to buffer (inc. dual sided faces)
     s += pack_variant(len(faces))
-    for f in faces:
-        s += f['data']
+    for i in range(len(faces)):
+        s += faces[i]['data']
     
     # normals
     # same as face count
-    for f in faces:
+    for i in range(len(faces)):
+        f = faces[i]
         flip = -1 if f['flip'] else 1
         f = f['face']
         s += "{}{}{}".format(pack_float(flip * f.normal.x), pack_float(flip * f.normal.z), pack_float(flip * f.normal.y))
@@ -137,7 +153,7 @@ def export_object(obcontext):
     # voxels
     voxels=defaultdict(set)
     for v in bm.verts:
-        pos_world = mat_world * v.co
+        pos_world = v.co
         x = (pos_world.x + 128)
         y = (pos_world.y + 128)
         if x<0 or y<0 or x>1024 or y>1024:

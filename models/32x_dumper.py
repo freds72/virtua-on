@@ -14,7 +14,7 @@ pygame.key.set_repeat(125)
 
 local_dir = os.path.dirname(os.path.realpath(__file__))
 my_font = pygame.font.SysFont("Courier", 16)
-mem_offset = 0x000a0000
+mem_offset = 0x0108000
  # bridge/map
 frame = 0
 scan_length = 2048
@@ -30,7 +30,7 @@ def project(x,y,z):
         return (256+scale*xx/zz, 256-scale*y/zz)
     return (256+width*x/2048, 256-height*y/2048)
 
-with open(os.path.join(local_dir,"Virtua Racing Deluxe (USA).32x"), 'rb') as rom_file:
+with open(os.path.join(local_dir,"Virtua Racing (USA).md"), 'rb') as rom_file:
     
     screen = pygame.display.set_mode(size)
     run = True
