@@ -14,7 +14,7 @@ pygame.key.set_repeat(125)
 
 local_dir = os.path.dirname(os.path.realpath(__file__))
 my_font = pygame.font.SysFont("Courier", 16)
-mem_offset = 0x0108000
+mem_offset = 0x00108000
  # bridge/map
 frame = 0
 scan_length = 2048

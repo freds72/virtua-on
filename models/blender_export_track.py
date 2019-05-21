@@ -73,6 +73,24 @@ def diffuse_to_p8color(rgb):
         # unknown color
         raise Exception('Unknown color: 0x{}'.format(h))
 
+genesis_to_p8_colors = {
+    "1": 4, # dark brown
+    "2": 7, # white
+    "3": 8, # red
+    "4": 1, # dark blue
+    "5": 10, # yellow
+    "6": 5, # dark grey
+    "7": 13, # light bluish grey
+    "8": 6, # light grey
+    "9": 13, # dark bluish grey
+    "a": 3, # dark green
+    "b": 11, # light green
+    "c": 3, # dark green
+    "d": 15, # light yellow
+    "e": 9, # dark yellow
+    "f": 4, # brown
+}
+
 def export_object(obcontext):
     # data
     s = ""
@@ -101,7 +119,7 @@ def export_object(obcontext):
         fs = ""
         # default values
         is_dual_sided = False
-        color = 1
+        color = 0x11
         len_verts = len(f.loops)
         if len_verts>4:
              raise Exception('Face: {} has too many vertices: {}'.format(i,len_verts))
@@ -109,16 +127,17 @@ def export_object(obcontext):
             slot = obcontext.material_slots[f.material_index]
             mat = slot.material
             is_dual_sided = mat.game_settings.use_backface_culling==False
-            color = 1+(len(faces)%14) # diffuse_to_p8color(mat.diffuse_color)
+            genesis_color = mat.name.split('_')[0]
+            color = genesis_to_p8_colors[genesis_color[0]]*16 + genesis_to_p8_colors[genesis_color[1]]
 
         # face flags bit layout:
         # tri/quad:  5
         # dual-side: 4
-        # color:     0-3
         fs += "{:02x}".format(
             (32 if len_verts==4 else 0) + 
-            (16 if is_dual_sided else 0) + 
-            color)
+            (16 if is_dual_sided else 0))
+        # color
+        fs += "{:02x}".format(color)
 
         # + vertex id (= edge loop)
         first_v=True
@@ -156,10 +175,10 @@ def export_object(obcontext):
         pos_world = v.co
         x = (pos_world.x + 128)
         y = (pos_world.y + 128)
-        if x<0 or y<0 or x>1024 or y>1024:
+        if x<0 or y<0 or x>256 or y>256:
             raise Exception('Invalid vertex: {}'.format(pos_world))
-        voxel = int(math.floor(x/16)) + 16*int(math.floor(y/16))
-        if voxel<0 or voxel>255:
+        voxel = int(math.floor(x/8)) + 32*int(math.floor(y/8))
+        if voxel<0 or voxel>32*32:
             raise Exception('Invalid voxel id: {} for {}/{}'.format(voxel,x,y))
         # find all connected faces
         # register in voxel
@@ -171,10 +190,10 @@ def export_object(obcontext):
     s += pack_variant(len(voxels.keys()))
     for k,v in voxels.items():
         # voxel ID
-        s += "{:02x}".format(k)   
+        s += pack_variant(k)
         # number of faces
         if len(v)>255:
-            raise Exception('Voxel: {}/{} has too many faces: {}'.format(voxel%16,round(k/16,0),len(v)))
+            raise Exception('Voxel: {}/{} has too many faces: {}'.format(voxel%32,round(k/32,0),len(v)))
         s += pack_variant(len(v))
         # face indices
         for i in v:

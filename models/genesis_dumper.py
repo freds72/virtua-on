@@ -16,10 +16,15 @@ local_dir = os.path.dirname(os.path.realpath(__file__))
 my_font = pygame.font.SysFont("Courier", 16)
 # Genesis
 # mem_offset = 0x00138200 # Track 1
-mem_offset = 0x0014c200 # Track 2
-# mem_offset = 0x00164290 # Track 3 !! invalid !!
+# mem_offset = 0x0014c200 # Track 2
+# mem_offset = 0x00164298 # Track 3 - 167 segments - !!! missing last pin curve !!
 # mem_offset = 0x0014c200
-# mem_offset = 0x00108000 # car??
+# mem_offset = 0x00108000 # 0x0010c000 # car??
+mem_offset = 0x0012bd7c # rear tires
+#mem_offset = 0x0010c000 # 
+
+# mem_offset = 0x0109f2a # car body 2
+# mem_offset = 0x010d930 # car body 2
 
 # 32x
 # mem_offset = 0xa000 # start of poly data
@@ -30,10 +35,10 @@ tmp_offset = 0
 flag_mask = 1
 
 def project(x,y,z):
-    return (256+scale*x/512,256-scale*z/512)
+    #return (256+scale*x/512,256-scale*z/512)
     angle = frame/2048
-    xx = x #*math.cos(angle) - z*math.sin(angle)
-    zz = z #*math.cos(angle) + x*math.sin(angle)
+    xx = x*math.cos(angle) - z*math.sin(angle)
+    zz = z*math.cos(angle) + x*math.sin(angle)
     zz /= 4096
     zz += 16*scale
     if zz>0:
@@ -56,14 +61,14 @@ with open(os.path.join(local_dir,"Virtua Racing (USA).md"), 'rb') as rom_file:
                 if ev.key == pygame.K_RIGHT: mem_offset += 1
                 if ev.key == pygame.K_UP: scale += 1
                 if ev.key == pygame.K_DOWN: scale -= 1
-                if ev.key == pygame.K_PAGEUP: ob_offset += tmp_offset
-                if ev.key == pygame.K_PAGEDOWN: ob_offset = 0
+                if ev.key == pygame.K_PAGEUP: mem_offset += 100 # ob_offset += tmp_offset
+                if ev.key == pygame.K_PAGEDOWN: mem_offset -= 100  # ob_offset = 0
                 if ev.key == pygame.K_b: point_sel -= 1
                 if ev.key == pygame.K_n: point_sel += 1
                 if ev.key == pygame.K_f: flag_mask = flag_mask<<1
                 mem_offset = max(0,mem_offset)
                 mem_offset = min(0x001ffff0, mem_offset)
-
+                
                 scale = max(1,scale)
                 point_sel = max(0,point_sel)
                 if flag_mask>0xf:
@@ -75,14 +80,14 @@ with open(os.path.join(local_dir,"Virtua Racing (USA).md"), 'rb') as rom_file:
         screen.blit(the_text, (10, 10))
 
         rom_file.seek(mem_offset + ob_offset)
-        for o in range(129):
+        for o in range(1):
             # format: http://forums.sonicretro.org/index.php?showtopic=38296
             unknown_flag = rom_file.read(1)
             # number of faces
             faces_count = rom_file.read(1)[0]+1
             tmp_offset = 2
             point_i = 0
-            if faces_count<500000:
+            if faces_count<255:
                 for i in range(faces_count):
                     face_colors = rom_file.read(1)[0]
                     # face flags
@@ -95,7 +100,7 @@ with open(os.path.join(local_dir,"Virtua Racing (USA).md"), 'rb') as rom_file:
                     tmp_offset += 2
 
                     vertex_count = 3 if (0x10 & face_flags) == 0x10 else 4
-                    c = 255*(1 if face_flags & flag_mask else 0)
+                    c = 255 #*(1 if face_flags & flag_mask else 0)
                     points = []
                     for k in range(vertex_count):
                         x = int.from_bytes(rom_file.read(2), byteorder='big', signed=True)

@@ -19,7 +19,7 @@ def call(args):
 s = ""
 
 # 3d models
-file_list = ['cube','bones','cactus','tree','rock','whale','arch']
+file_list = ['car_genesis']
 s = s + "{:02x}".format(len(file_list))
 for blend_file in file_list:
     print("Exporting: {}.blend".format(blend_file))

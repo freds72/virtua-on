@@ -13,12 +13,14 @@ def makeMaterial(name, diffuse, culling):
     return mat
  
 
-mem_offset = 0x00138200 # Track 1 (Genesis)
+# mem_offset = 0x00138200 # Track 1 (Genesis)
 # mem_offset = 0x0014c200 # Track 2 (Genesis)
 # mem_offset = 0x00164290 # Track 2 (Genesis)
 # mem_offset = 0x0014c200
 # mem_offset = 0x00108000
 # mem_offset = 0xa000 # start of poly data (32x)
+# mem_offset = 0x10e490 # car data (+ LOD) - to be fixed
+mem_offset   = 0x12bd7c # car read tires
 
 # clear materials
 for material in bpy.data.materials:
@@ -43,7 +45,7 @@ bm.from_mesh(me)   # fill it in from a Mesh
  
 with open(os.path.join("C:\\Users\\Frederic\\Source\\Repos\\virtua-on\\models","Virtua Racing (USA).md"), 'rb') as rom_file:
     rom_file.seek(mem_offset)
-    for o in range(128):
+    for o in range(1):
         # format: http://forums.sonicretro.org/index.php?showtopic=38296
         unknown_flag = rom_file.read(1)
         # number of faces

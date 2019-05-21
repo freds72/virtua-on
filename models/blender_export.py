@@ -26,17 +26,33 @@ charset="_0123456789abcdefghijklmnopqrstuvwxyz"
 def tohex(val, nbits):
     return (hex((int(round(val,0)) + (1<<nbits)) % (1<<nbits))[2:]).zfill(nbits>>2)
 
+# variable length packing (1 or 2 bytes)
+def pack_variant(x):
+    if x>0x7fff:
+      raise Exception('Unable to convert: {} into a 1 or 2 bytes'.format(x))
+    # 2 bytes
+    if x>127:
+        h = "{:04x}".format(x + 0x8000)
+        if len(h)!=4:
+            raise Exception('Unable to convert: {} into a word: {}'.format(x,h))
+        return h
+    # 1 byte
+    h = "{:02x}".format(x)
+    if len(h)!=2:
+        raise Exception('Unable to convert: {} into a byte: {}'.format(x,h))
+    return h
+
 # float must be between -3.2/+3.2
 def pack_float(x):
     h = "{:02x}".format(int(round(32*x+128,0)))
     if len(h)!=2:
         raise Exception('Unable to convert: {} into a byte: {}'.format(x,h))
     return h
-# double must be between -2046/+2046
+# double must be between -128/+127 resolution: 0.0078
 def pack_double(x):
-    h = "{}".format(tohex(16*x+16384,16))
+    h = "{}".format(tohex(128*x+16384,16))
     if len(h)!=4:
-        raise Exception('Unable to convert: {} into a double-byte: {}'.format(x,h))
+        raise Exception('Unable to convert: {} into a word: {}'.format(x,h))
     return h
 
 p8_colors = ['000000','1D2B53','7E2553','008751','AB5236','5F574F','C2C3C7','FFF1E8','FF004D','FFA300','FFEC27','00E436','29ADFF','83769C','FF77A8','FFCCAA']
@@ -49,19 +65,6 @@ def diffuse_to_p8color(rgb):
         # unknown color
         raise Exception('Unknown color: 0x{}'.format(h))
 
-# colliders (up to 8)
-# ID must start at 1
-solid_db = {
- "SOLID_1": 1,
- "SOLID_2": 2,
- "SOLID_3": 3,
- "SOLID_4": 4,
- "SOLID_5": 5,
- "SOLID_6": 6,
- "SOLID_7": 7,
- "SOLID_8": 8
-}
-
 def export_layer(scale,l):
     # data
     s = ""
@@ -72,17 +75,12 @@ def export_layer(scale,l):
         bm = bmesh.new()
         bm.from_mesh(obdata)
 
-        # create vertex group lookup dictionary for names
-        vgroup_names = {vgroup.index: vgroup.name for vgroup in obcontext.vertex_groups}
-        # create dictionary of vertex group assignments per vertex
-        vgroups = {v.index: [vgroup_names[g.group] for g in v.groups] for v in obdata.vertices}
-
         # create a map loop index -> vertex index (see: https://www.python.org/dev/peps/pep-0274/)
         loop_vert = {l.index:l.vertex_index for l in obdata.loops}
 
         vlen = len(obdata.vertices)
         # vertices
-        s += "{:02x}".format(vlen)
+        s += pack_variant(vlen)
         for v in obdata.vertices:
             s += "{}{}{}".format(pack_double(v.co.x), pack_double(v.co.z), pack_double(v.co.y))
 
@@ -91,36 +89,32 @@ def export_layer(scale,l):
         for i in range(len(obdata.polygons)):
             f=obdata.polygons[i]
             fs = ""
-            # color
-            is_dual_sided = False          
+            color = 0x11
+            is_dual_sided = False     
+            len_verts = len(f.loop_indices)
+            if len_verts>4:
+                raise Exception('Face: {} has too many vertices: {}'.format(i,len_verts))
+            # color / dual sided flag     
             if len(obcontext.material_slots)>0:
                 slot = obcontext.material_slots[f.material_index]
                 mat = slot.material
                 is_dual_sided = mat.game_settings.use_backface_culling==False
-                fs += "{:02x}".format(diffuse_to_p8color(mat.diffuse_color))
-            else:
-                fs += "{:02x}".format(1) # default color
-            # is face part of a solid?
-            face_verts = {loop_vert[li]:li for li in f.loop_indices}
-            solid_group = {vgroups[k][0]:v for k,v in face_verts.items() if len(vgroups[k])==1}
-            solid_group = set([solid_db[k] for k,v in solid_group.items() if k in solid_db])
-            if len(solid_group)>1:
-                raise Exception('Multiple vertex groups for the same face') 
-            if len(solid_group)==1:
-                # get group ID
-                solid_group=solid_group.pop()
-                fs += "{:02x}".format(solid_group)
-            else:
-                fs += "{:02x}".format(0)
+                # colors are encoded as hex figures in Blender!
+                color = int.from_bytes(bytes.fromhex(mat.name.split('_')[0]),'big')
 
-            # + face count
-            fs += "{:02x}".format(len(f.loop_indices))
+            # face flags bit layout:
+            # tri/quad:  5
+            # dual-side: 4
+            fs += "{:02x}".format(
+                (32 if len_verts==4 else 0) + 
+                (16 if is_dual_sided else 0))
+            # color
+            fs += "{:02x}".format(color)
+
             # + vertex id (= edge loop)
             for li in f.loop_indices:
                 fs += "{:02x}".format(loop_vert[li]+1)
             faces.append({'face': f, 'flip': False, 'data': fs})
-            if is_dual_sided:
-                faces.append({'face': f, 'flip': True, 'data': fs})
 
         # push face data to buffer (inc. dual sided faces)
         s += "{:02x}".format(len(faces))

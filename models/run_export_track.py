@@ -18,22 +18,19 @@ def call(args):
 
 # data buffer
 s = ""
-# 3d models
-file_list = ['big_forest_genesis']
-s = s + "{:02x}".format(len(file_list))
-for blend_file in file_list:
-    print("Exporting: {}.blend".format(blend_file))
-    fd, path = tempfile.mkstemp()
-    try:
-        os.close(fd)
-        exitcode, out, err = call([os.path.join(blender_dir,"blender.exe"),os.path.join(local_dir,blend_file + ".blend"),"--background","--python",os.path.join(local_dir,"blender_export_track.py"),"--","--out",path])
-        if err:
-            raise Exception('Unable to load: {}. Exception: {}'.format(blend_file,err))
-        print("exit: {} \n out:{}\n err: {}\n".format(exitcode,out,err))
-        with open(path, 'r') as outfile:
-            s = s + outfile.read()
-    finally:
-        os.remove(path)
+blend_file = 'big_forest_genesis'
+print("Exporting: {}.blend".format(blend_file))
+fd, path = tempfile.mkstemp()
+try:
+    os.close(fd)
+    exitcode, out, err = call([os.path.join(blender_dir,"blender.exe"),os.path.join(local_dir,blend_file + ".blend"),"--background","--python",os.path.join(local_dir,"blender_export_track.py"),"--","--out",path])
+    if err:
+        raise Exception('Unable to load: {}. Exception: {}'.format(blend_file,err))
+    print("exit: {} \n out:{}\n err: {}\n".format(exitcode,out,err))
+    with open(path, 'r') as outfile:
+        s = s + outfile.read()
+finally:
+    os.remove(path)
 
 # pico-8 map format
 #       0x0    gfx
