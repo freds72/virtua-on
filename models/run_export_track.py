@@ -37,8 +37,8 @@ finally:
 #		0x1000 gfx2/map2 (shared)
 #		0x2000 map
 #		0x3000 gfx_props
-#		0x3100 song
-#		0x3200 sfx (??? doesn't work)
+#		0x3100 music
+#		0x3200 sfx
 #		0x4300 user data
 
 #if len(s)>2*0x4300:

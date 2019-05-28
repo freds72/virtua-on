@@ -3,8 +3,11 @@ import bmesh
 import argparse
 import sys
 import math
+import mathutils
 from mathutils import Vector, Matrix
 from collections import defaultdict
+
+# bpy.app.debug = True
 
 argv = sys.argv
 if "--" not in argv:
@@ -23,6 +26,8 @@ scene = bpy.context.scene
 
 # charset
 charset="_0123456789abcdefghijklmnopqrstuvwxyz"
+
+epsilon = 0.001
 
 def tohex(val, nbits):
     return (hex((int(round(val,0)) + (1<<nbits)) % (1<<nbits))[2:]).zfill(nbits>>2)
@@ -91,6 +96,56 @@ genesis_to_p8_colors = {
     "f": 4, # brown
 }
 
+def voxel_bbox2d_intersects(i,j,w,b):
+  return (abs(i - b[0]) * 2 < (w + b[2])) and (abs(j - b[1]) * 2 < (w + b[3]))
+
+def verts_to_bbox2d(verts):
+    xs = [v.co.x for v in verts]
+    ys = [v.co.y for v in verts]
+    return (min(xs), min(ys), max(xs)-min(xs), max(ys)-min(ys))
+
+def export_face(obcontext, f, loop_vert, inner_faces):
+    fs = ""
+    # default values
+    is_dual_sided = False
+    color = 0x11
+    len_verts = len(f.loops)
+    if len_verts>4:
+        raise Exception('Face: {} has too many vertices: {}'.format(i,len_verts))
+    if len(obcontext.material_slots)>0:
+        slot = obcontext.material_slots[f.material_index]
+        mat = slot.material
+        is_dual_sided = mat.game_settings.use_backface_culling==False
+        genesis_color = mat.name.split('_')[0]
+        color = genesis_to_p8_colors[genesis_color[0]]*16 + genesis_to_p8_colors[genesis_color[1]]
+
+    has_inner_faces = inner_faces is not None and len(inner_faces)>0
+    # face flags bit layout:
+    # inner faces:  8
+    # track:        4 (todo)
+    # tri/quad:     2
+    # dual-side:    1
+    fs += "{:02x}".format(
+        (8 if has_inner_faces else 0) + 
+        (2 if len_verts==4 else 0) + 
+        (1 if is_dual_sided else 0))
+    # color
+    fs += "{:02x}".format(color)
+
+    # + vertex id (= edge loop)
+    for l in f.loops:
+        vi = loop_vert[l.index]+1
+        fs += pack_variant(vi)
+
+    # inner faces?
+    if has_inner_faces:
+        fs += pack_variant(len(inner_faces))
+        print("face: {} details: {}".format(f.index, len(inner_faces)))
+        for inner_face in inner_faces:
+            fs += export_face(obcontext, inner_face, loop_vert, None)
+
+    return fs
+
 def export_object(obcontext):
     # data
     s = ""
@@ -108,55 +163,66 @@ def export_object(obcontext):
 
     # vertices
     lens = pack_variant(len(obdata.vertices))
-    print("vertices: 0x{}".format(lens))
     s += lens
     for v in obdata.vertices:
         s += "{}{}{}".format(pack_double(v.co.x), pack_double(v.co.z), pack_double(v.co.y))
 
-    # faces
+    # find detail vertices
+    group_idx = obcontext.vertex_groups['DETAIL_FACE'].index
+    group_verts = [v.index for v in obdata.vertices if group_idx in [ vg.group for vg in v.groups ] ]
+
+    # find detail faces
+    detail_faces = [f for f in bm.faces if len(f.verts)==len([v for v in f.verts if v.index in group_verts])]
+
+    # all other faces
+    other_faces = [f for f in bm.faces if f.index not in [f.index for f in detail_faces]]
+
+    # map face index --> list of inner face indices
+    inner_per_face = defaultdict(set)
+    all_inner_faces = set()
+
+    for f in detail_faces:
+        # find similar normals
+        for of in [of for of in other_faces if f.normal.dot(of.normal)>0.98]:
+            v = of.verts[0].co - f.verts[0].co
+            if abs(f.normal.dot(v))<0.01:  
+                # print("{} <-coplanar-> {}".format(f.index, of.index))
+                # inside?
+                is_inside = True    
+                for of_point in of.verts:
+                    p0 = f.verts[len(f.verts)-1].co - of_point.co
+                    # shared vertex?
+                    if p0.length>epsilon:
+                        for i_point in range(len(f.verts)):
+                            p1 = f.verts[i_point].co - of_point.co
+                            # shared vertex or colinear?
+                            n = p0.cross(p1)
+                            #print("p1: {} / n: {}".format(p1.length, n.length))
+                            if p1.length>epsilon and n.length>0.02:
+                                n.normalize()                 
+                                if f.normal.dot(n)<-epsilon:
+                                    is_inside = False
+                                    break
+                            p0 = p1.copy()
+                    # stop checking this other face
+                    if is_inside == False:
+                        break
+                # register inner face (excluded from direct export)
+                if is_inside:
+                    all_inner_faces.add(of.index)
+                    inner_per_face[f.index].add(of)
+
+    # faces (excluding inner faces)
     faces = []
-    for f in bm.faces:
-        fs = ""
-        # default values
-        is_dual_sided = False
-        color = 0x11
-        len_verts = len(f.loops)
-        if len_verts>4:
-             raise Exception('Face: {} has too many vertices: {}'.format(i,len_verts))
-        if len(obcontext.material_slots)>0:
-            slot = obcontext.material_slots[f.material_index]
-            mat = slot.material
-            is_dual_sided = mat.game_settings.use_backface_culling==False
-            genesis_color = mat.name.split('_')[0]
-            color = genesis_to_p8_colors[genesis_color[0]]*16 + genesis_to_p8_colors[genesis_color[1]]
-
-        # face flags bit layout:
-        # tri/quad:  5
-        # dual-side: 4
-        fs += "{:02x}".format(
-            (32 if len_verts==4 else 0) + 
-            (16 if is_dual_sided else 0))
-        # color
-        fs += "{:02x}".format(color)
-
-        # + vertex id (= edge loop)
-        first_v=True
-        for l in f.loops:
-            vi = loop_vert[l.index]+1
-            if vi>len(obdata.vertices):
-                raise Exception("Incorrect vertice index: {}".format(vi))
-            #if first_v:                
-            #    print("vi: {}".format(vi))
-            #    if is_dual_sided:
-            #        print("vi: {}".format(vi))
-            #    first_v=False
-            fs += pack_variant(vi)
-
-        faces.append({'face': f, 'flip': False, 'data': fs})
-        #if is_dual_sided:
-        #    faces.append({'face': f, 'flip': True, 'data': fs})
+    for f in [f for f in bm.faces if f.index not in all_inner_faces]:
+        inner_faces = inner_per_face.get(f.index)
+        if inner_faces and len(inner_faces)>127:
+            raise Exception('Face: {} too many inner faces: {}'.format(f.index,len(inner_faces)))
+        face_data = export_face(obcontext, f, loop_vert, inner_faces)
+        faces.append({'face': f, 'data': face_data, 'bbox': verts_to_bbox2d(f.verts)})
 
     # push face data to buffer (inc. dual sided faces)
+    print("Total faces: {} / inner faces: {}".format(len(faces), len(all_inner_faces)))
     s += pack_variant(len(faces))
     for i in range(len(faces)):
         s += faces[i]['data']
@@ -164,10 +230,8 @@ def export_object(obcontext):
     # normals
     # same as face count
     for i in range(len(faces)):
-        f = faces[i]
-        flip = -1 if f['flip'] else 1
-        f = f['face']
-        s += "{}{}{}".format(pack_float(flip * f.normal.x), pack_float(flip * f.normal.z), pack_float(flip * f.normal.y))
+        f = faces[i]['face']
+        s += "{}{}{}".format(pack_float(f.normal.x), pack_float(f.normal.z), pack_float(f.normal.y))
 
     # voxels
     voxels=defaultdict(set)
@@ -180,10 +244,40 @@ def export_object(obcontext):
         voxel = int(math.floor(x/8)) + 32*int(math.floor(y/8))
         if voxel<0 or voxel>32*32:
             raise Exception('Invalid voxel id: {} for {}/{}'.format(voxel,x,y))
-        # find all connected faces
+        # find all overlapped faces
         # register in voxel
-        for face in v.link_faces:
+        for face in [f for f in v.link_faces if f.index not in all_inner_faces]:
             voxels[voxel].add(face.index)
+    #
+    # voxel_w = 8
+    # voxel_planes = (
+    #     Vector((0,0,0)),(0,-1,0),
+    #     Vector((voxel_w,0,0)),(1,0,0),
+    #     Vector((voxel_w,voxel_w,0)),(0,1,0),
+    #     Vector((0,voxel_w,0)),(-1,0,0)
+    # )
+    # # ref: https://blender.stackexchange.com/questions/75845/wrong-shading-as-a-result-of-bisect-plane-in-bmesh
+    # for i in range(len(faces)):
+    #     f = faces[i]['face']
+    #     fbox = faces[i]['bbox']
+    #     for vi in range(32):
+    #         vx = vi-128
+    #         for vj in range(32):
+    #             vy = vj-128
+    #             if voxel_bbox2d_intersects(vx,vy,voxel_w,fbox):
+    #                 fmesh = bmesh.ops.duplicate(bm, geom=f.verts[:] + f.edges[:] + (f))
+
+    #                 # clip face against voxel borders
+    #                 for (plane_co, plane_no) in voxel_planes:
+    #                     voxel_p = plane_co + (vx,vy,0)
+    #                     voxel_n = plane_no
+    #                     res = bmesh.ops.bisect_plane(fmesh, geom = fmesh.verts[:] + fmesh.edges[:] + fmesh.faces[:], dist = 0, plane_co = voxel_p,plane_no = voxel_n, clear_outer = True)
+    #                     fmesh.ops.split_edges(fmesh, edges=[e for e in ret['geom_cut'] if isinstance(e, bmesh.types.BMEdge)])                
+    #                 # any match
+    #                 if len(fmesh.verts)>0:
+    #                     voxel_id = vi + 32*vj
+    #                     print("voxel[{}] += face: {}".format(voxel_id,face.index))
+    #                     voxels[voxel_id].add(face.index)
 
     # export voxels
     # number of cells

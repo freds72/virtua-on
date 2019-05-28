@@ -103,11 +103,11 @@ def export_layer(scale,l):
                 color = int.from_bytes(bytes.fromhex(mat.name.split('_')[0]),'big')
 
             # face flags bit layout:
-            # tri/quad:  5
-            # dual-side: 4
+            # tri/quad:  2
+            # dual-side: 1
             fs += "{:02x}".format(
-                (32 if len_verts==4 else 0) + 
-                (16 if is_dual_sided else 0))
+                (2 if len_verts==4 else 0) + 
+                (1 if is_dual_sided else 0))
             # color
             fs += "{:02x}".format(color)
 
