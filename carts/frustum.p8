@@ -138,19 +138,18 @@ end
 
 -->8
 -- main engine
-local angles={}
 function make_cam(x0,y0,focal)
-	local angle=0
-	for i=0,127 do
-		add(angles,atan2(64,i-64))
+	local angle,angles=0,{}
+	for i=0,15 do
+		add(angles,atan2(7.5,i-7.5))
 	end
 	return {
 		pos={0,0,0},
 		track=function(self,pos,a,m)
    			self.pos=v_clone(pos)
    			-- height
-			v_add(self.pos,m_fwd(m),-1.5)
-   			self.pos[2]+=1.5
+			v_add(self.pos,m_fwd(m),-0.5)
+   			self.pos[2]+=0.5
 			angle=a
 			-- inverse view matrix
 		   	m_inv(m)
@@ -171,7 +170,7 @@ function make_cam(x0,y0,focal)
     [x0+32*y0]=true
    } 
    
-   for i=1,128 do
+   for i=1,16 do
    	
    	local a=angles[i]+angle
    	local v,u=cos(a),-sin(a)
@@ -204,7 +203,7 @@ function make_cam(x0,y0,focal)
    			mapy+=mapdy
    		end
    		-- non solid visible tiles
-   		if mapx>=0 and mapy>=0 and mapx<16 and mapy<16 then
+   		if band(bor(mapx,mapy),0xffe0)==0 then
    			tiles[mapx+32*mapy]=true
    		end
    	end				
@@ -239,7 +238,7 @@ function make_plyr(p)
 			-- update orientation matrix
 			local m=make_m_from_euler(0,angle,0)
 			v_add(pos,m_fwd(m),velocity/4)
-			v_add(pos,v_up,-0.2)
+			v_add(pos,v_up,-0.4)
 			-- find ground
 			local newf,newpos=find_face(pos,oldf)
 			if newf then		
@@ -252,7 +251,7 @@ function make_plyr(p)
 	}
 end
 
-local cam=make_cam(63.5,63.5,32)
+local cam=make_cam(63.5,63.5,64)
 local plyr=make_plyr({0,32,0})
 local plane=make_plane(8)
 local all_models={}
@@ -314,7 +313,12 @@ function _init()
 	track=all_models["track"]	
 end
 
+local voxel_id=821
 function _update()
+	if(btn(4)) voxel_id+=1
+	if(btn(5)) voxel_id-=1
+	voxel_id=(voxel_id%1024+1024)%1024
+
 	plyr:handle_input()
 	
 	plyr:update()
@@ -330,7 +334,7 @@ local current_face
 function collect_faces(faces,cam_pos,v_cache,out)
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
-		if (band(face.flags,1)!=0 or v_dot(face.n,cam_pos)>face.cp) and face.session!=sessionid then
+		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
 			local z,outcode,verts=0,0,{}
 			-- project vertices
 			for _,vi in pairs(face.vi) do
@@ -342,8 +346,9 @@ function collect_faces(faces,cam_pos,v_cache,out)
 			-- mix of near/far verts?
 			if band(outcode,1)==1 then
 				-- mix of near+far vertices?
-				if(band(outcode,0x9)==9) verts=z_poly_clip(z_near,verts)
-				if(#verts>2) out[#out+1]={key=64/z,c=face.c,v=verts}
+				local is_clipped
+				if(band(outcode,0x9)==9) verts=z_poly_clip(z_near,verts) is_clipped=true
+				if(#verts>2) out[#out+1]={key=64/z,f=face,v=verts,clipped=is_clipped}
 			end
 			face.session=sessionid	
 		end
@@ -373,6 +378,27 @@ function collect_model_faces(model,m,out)
 	collect_faces(model.f,cam_pos,v_cache,out)
 end
 
+function draw_polys(polys,v_cache)
+	-- all poly are encoded with 2 colors
+ 	fillp(0xa5a5)
+	for i=1,#polys do
+		local d=polys[i]
+		project_poly(d.v,d.f.c)
+		-- details?
+		if d.f.inner then					
+			for _,face in pairs(d.f.inner) do
+				local verts={}
+				for _,vi in pairs(face.vi) do
+					local a=v_cache(vi)
+					verts[#verts+1]=a
+				end
+				if(d.clipped) verts=z_poly_clip(z_near,verts)
+				project_poly(verts,face.c)
+			end
+		end
+	end
+	fillp()
+end
 
 function _draw()
 	sessionid+=1
@@ -393,65 +419,60 @@ function _draw()
  
 	local tiles=cam:visible_tiles()
 
- for k,_ in pairs(tiles) do
-	 local i,j=k%32,flr(k/32)
- 	local offset={8*i-128,0,8*j-128}
- 	local p0=v_clone(plane[4])
- 	v_add(p0,offset)
- 	v_add(p0,cam.pos,-1)
-	 m_x_v(cam.m,p0)
- 	local x0,y0,w0=cam:project(p0)
- 	local faces=track.voxels[k]
-	if faces then
-		fillp() 
-	else
-		fillp(0xa5a5)
-	end
-	for k=1,4 do
-		local p1=v_clone(plane[k])
-		v_add(p1,offset)
-		v_add(p1,cam.pos,-1)
-		m_x_v(cam.m,p1)
-			local x1,y1,w1=cam:project(p1)
-			if w0>0 and w1>0 then
-				line(x0,y0,x1,y1,11)
-			end
-			x0,y0,w0=x1,y1,w1
+	--[[
+	function draw_voxel_plane(k,c)
+		local i,j=k%32,flr(k/32)
+ 		local offset={8*i-128,0,8*j-128}
+		local verts={}
+		for vi,v in pairs(plane) do			
+ 			v=v_clone(v)
+ 			v_add(v,offset)
+ 			v_add(v,cam.pos,-1)
+	 		m_x_v(cam.m,v)
+			verts[vi]=v
 		end
+		local faces=track.voxels[k]
+		if faces then
+			fillp() 
+		else
+			fillp(0xa5a5)
+		end
+		verts=z_poly_clip(z_near,verts)
+		project_poly(verts,c)
+	end
+
+ 	for k,_ in pairs(tiles) do
+	 	draw_voxel_plane(k,0x21)
 		--if(faces) print(#faces,x0,y0-8,7)
 	end
 	fillp()
- 
+	]]
 
 	local out={}
 	-- get visible voxels
-	--for k,_ in pairs(tiles) do
-		for k,_ in pairs(track.voxels) do
+	for k,_ in pairs(tiles) do
+	--for k,_ in pairs(track.voxels) do
 		local faces=track.voxels[k]
+		--local faces=track.voxels[voxel_id]
 		if faces then
 			collect_faces(faces,cam.pos,v_cache,out)
 		end 
 	end
 	
-	-- player model
+	-- track
+ 	sort(out)
+	draw_polys(out,v_cache)
+
+	-- car
+	out={}
 	local pos,angle,m=plyr:get_pos()
 	m_set_pos(m,pos)
 	collect_model_faces(all_models["car"].lods[1],m,out)
+ 	sort(out)
+	draw_polys(out)
 
- sort(out)
-	-- all poly are encoded with 2 colors
- 	fillp(0xa5a5)
-	for i=1,#out do
-		local d=out[i]
-		project_poly(d.v,d.c)
-	end
-	fillp()
-
-	local px,py=cam:project2d(pos[1],pos[3])
-	pset(px,py,9)
- 
 	local cpu=flr(1000*stat(1))/10
-	cpu=cpu.." ▤"..stat(0).." █:"..#out.."\n"..cam.pos[1].."/"..cam.pos[3]
+	cpu=cpu.." ▤"..stat(0).." █:"..#out.."\n"..cam.pos[1].."/"..cam.pos[3].."\nvoxel: "..voxel_id.."\n"..(voxel_id%32).."/"..flr(voxel_id/32)
 	print(cpu,2,3,5)
 	print(cpu,2,2,7)
 
@@ -536,7 +557,7 @@ function unpack_model(model,scale)
 		local n=band(f.flags,2)>0 and 4 or 3
 		for i=1,n do
 			add(f.vi,unpack_variant())
-		end	
+		end
 		-- inner faces?
 		if band(f.flags,8)>0 then
 			f.inner={}
@@ -548,24 +569,23 @@ function unpack_model(model,scale)
 				for i=1,n do
 					add(df.vi,unpack_variant())
 				end
+				-- no normals + no cp
 				add(f.inner,df)
 			end)
 		end
+		-- normal?
+		-- if band(f.flags,4)>0 then
+			f.n={unpack_double(),unpack_double(),unpack_double()}
+			f.cp=unpack_double()
+		-- end
 		add(model.f,f)
 	end)
-
-	-- normals + n.p cache
-	for i=1,#model.f do
-		local f=model.f[i]
-		f.n={unpack_float(),unpack_float(),unpack_float()}
-		f.cp=v_dot(f.n,model.v[f.vi[1]])
-	end
 end
 function unpack_models()
 	mem=0x1000
 	-- for all models
 	unpack_array(function()
-  local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
+		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
 				
 		unpack_array(function()
 			local d=unpack_double()
@@ -577,7 +597,7 @@ function unpack_models()
 		-- level of details models
 		unpack_array(function()
 			local lod={v={},f={},n={},cp={}}
-			unpack_model(lod,0.1)
+			unpack_model(lod,0.05)
 			add(model.lods,lod)
 		end)
 
@@ -799,16 +819,22 @@ ebc309f3c10408b3eaf3c104e9c309046e046db3eaf3a1046db3eae3c1040804bde3c114f014e2e3
 e2149114f0142d149114f014e2144ef31f14e21491f31f142d1491040804bd1491f31f14e2144ef31f142d149104082452144e04082452144e14f0142de3c104
 08b3bde3c114f0c3e2e37e14f0c32de37e14f0c3e2e3c1f31fc3e2e37ef31fc32de37e0408b3bde37ef31fc3e2e3c1f31fc32de37e0408d352e3c10408d352e3
 c114f0c32d144e0408b3bd144e14f0c3e2149114f0c32d149114f0c3e2144ef31fc3e21491f31fc32d14910408b3bd1491f31fc3e2144ef31fc32d14910408d3
-52144e0408d352144e14f0c32d75301110203040301150607080208890a0b0c0208841d051613082e07181f03022011121312000a14232912000a191f1c12000
-b1c1f12220003212d191205591d102f12000e122f1022000d112e1022055123222e120003242b122205542a1c1b10066f372340011448292005592b2630022e2
-43e30022a252732055b333237420555363b254205574c2d2b30082c364a3008803c2f32066e2d374232066235443e22066a2f25333206633b313a200610364c3
-2022a213a352205554233353002273f2a2205554b2e3432055f273635320666373449220668314930420669282e3b22088a313b3d20082f364030088a3d2c320
-55c3d2c2032088c274d3f32055931482440022e2e372202272f3d3e2006652a362008224a364008264f3242022830462340088346224206634721483008824f3
-3420665262049300882462a3302230605040200094842535200094b4e4842000a415e4b420002584c405205584e4f4c42000d4f4e4152000c4f4d405205505d4
-152520002515a435205535a4b494200055f5e54520005545a57520006575a5d52000e5c5854520554585b5a5200095d5a5b5200085c595b52055c5e5d5952000
-e5f565d52055f555756520001606a6b62000163666062000269666362000a60646862055066676462000567666962000467656862055865696a62000a69626b6
-2055b6263616750a08080608080608080a0808080608080a080608080809460a08080608080807460a08080806080807c90809c9080a08d9d8b708f978080618
-68f9f7a7f9f708060808060808060827d9c7a93908f918770a0858060858161877085726b7f9c7080608a7f9f7693879a6387916785808080af97858e69876e8
-d9c7663908081697299876080af768f9f758f9c736d8b7661997a91997080ad708f997d9e808a9198736e8086619870806080a08080809460608080a08080807
-460608080806080807c90809c9080a080608080809460a08080608080807460a08080806080807c90809c9080a080a08080809460608080a0808080746060808
-0806080807c90809c9080a08
+52144e0408d352144e14f0c32d7530111020304004080400040014c530115060708004080400040014c5208890a0b0c004080400040014c5208841d051610408
+0400040014c53082e07181f004080400040014c530220111213104080400040014c52000a142329104080400040014c52000a191f1c104080400040014c52000
+b1c1f12204080400040014c520003212d19104080400040014c5205591d102f104080400040014c52000e122f10204080400040014c52000d112e10204080400
+040014c52055123222e104080400040014c520003242b12204080400040014c5205542a1c1b104080400040014c50066f3723404080400040014c50011448292
+04080400040014c5005592b26304080400040014c50022e243e304080400040014c50022a2527304080400040014c52055b333237404080400040014c5205553
+63b25404080400040014c5205574c2d2b304080400040014c50082c364a304080400040014c5008803c2f304080400040014c52066e2d3742304080400040014
+c52066235443e204080400040014c52066a2f2533304080400040014c5206633b313a204080400040014c500610364c304080400040014c52022a213a3520408
+0400040014c520555423335304080400040014c5002273f2a204080400040014c5205554b2e34304080400040014c52055f273635304080400040014c5206663
+73449204080400040014c520668314930404080400040014c520669282e3b204080400040014c52088a313b3d204080400040014c50082f36403040804000400
+14c50088a3d2c304080400040014c52055c3d2c20304080400040014c52088c274d3f304080400040014c520559314824404080400040014c50022e2e3720408
+0400040014c5202272f3d3e204080400040014c5006652a36204080400040014c5008224a36404080400040014c5008264f32404080400040014c52022830462
+3404080400040014c5008834622404080400040014c520663472148304080400040014c5008824f33404080400040014c520665262049304080400040014c500
+882462a304080400040014c530223060504004080400040014c520009484253504080400040014c5200094b4e48404080400040014c52000a415e4b404080400
+040014c520002584c40504080400040014c5205584e4f4c404080400040014c52000d4f4e41504080400040014c52000c4f4d40504080400040014c5205505d4
+152504080400040014c520002515a43504080400040014c5205535a4b49404080400040014c5200055f5e54504080400040014c520005545a575040804000400
+14c520006575a5d504080400040014c52000e5c5854504080400040014c520554585b5a504080400040014c5200095d5a5b504080400040014c5200085c595b5
+04080400040014c52055c5e5d59504080400040014c52000e5f565d504080400040014c52055f555756504080400040014c520001606a6b604080400040014c5
+20001636660604080400040014c520002696663604080400040014c52000a606468604080400040014c520550666764604080400040014c52000567666960408
+0400040014c520004676568604080400040014c52055865696a604080400040014c52000a69626b604080400040014c52055b626361604080400040014c5

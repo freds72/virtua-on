@@ -96,13 +96,16 @@ genesis_to_p8_colors = {
     "f": 4, # brown
 }
 
+# https://noonat.github.io/intersect/#aabb-vs-aabb
 def voxel_bbox2d_intersects(i,j,w,b):
-  return (abs(i - b[0]) * 2 < (w + b[2])) and (abs(j - b[1]) * 2 < (w + b[3]))
+    if b[2] < i or b[0] > i + w: return False
+    if b[3] < j or b[1] > j + w: return False    
+    return True
 
 def verts_to_bbox2d(verts):
     xs = [v.co.x for v in verts]
     ys = [v.co.y for v in verts]
-    return (min(xs), min(ys), max(xs)-min(xs), max(ys)-min(ys))
+    return (min(xs), min(ys), max(xs), max(ys))
 
 def export_face(obcontext, f, loop_vert, inner_faces):
     fs = ""
@@ -140,7 +143,6 @@ def export_face(obcontext, f, loop_vert, inner_faces):
     # inner faces?
     if has_inner_faces:
         fs += pack_variant(len(inner_faces))
-        print("face: {} details: {}".format(f.index, len(inner_faces)))
         for inner_face in inner_faces:
             fs += export_face(obcontext, inner_face, loop_vert, None)
 
@@ -166,13 +168,17 @@ def export_object(obcontext):
     s += lens
     for v in obdata.vertices:
         s += "{}{}{}".format(pack_double(v.co.x), pack_double(v.co.z), pack_double(v.co.y))
+        if v.index==1850:
+            print(v.co)
 
     # find detail vertices
-    group_idx = obcontext.vertex_groups['DETAIL_FACE'].index
-    group_verts = [v.index for v in obdata.vertices if group_idx in [ vg.group for vg in v.groups ] ]
+    detail_faces=[]
+    if 'DETAIL_FACE' in obcontext.vertex_groups:
+        group_idx = obcontext.vertex_groups['DETAIL_FACE'].index
+        group_verts = [v.index for v in obdata.vertices if group_idx in [ vg.group for vg in v.groups ] ]
 
-    # find detail faces
-    detail_faces = [f for f in bm.faces if len(f.verts)==len([v for v in f.verts if v.index in group_verts])]
+        # find detail faces
+        detail_faces = [f for f in bm.faces if len(f.verts)==len([v for v in f.verts if v.index in group_verts])]    
 
     # all other faces
     other_faces = [f for f in bm.faces if f.index not in [f.index for f in detail_faces]]
@@ -222,32 +228,40 @@ def export_object(obcontext):
         faces.append({'face': f, 'data': face_data, 'bbox': verts_to_bbox2d(f.verts)})
 
     # push face data to buffer (inc. dual sided faces)
-    print("Total faces: {} / inner faces: {}".format(len(faces), len(all_inner_faces)))
     s += pack_variant(len(faces))
     for i in range(len(faces)):
         s += faces[i]['data']
-    
-    # normals
-    # same as face count
-    for i in range(len(faces)):
+        # todo: don't export for non-track faces
         f = faces[i]['face']
-        s += "{}{}{}".format(pack_float(f.normal.x), pack_float(f.normal.z), pack_float(f.normal.y))
+        # normal
+        s += "{}{}{}".format(pack_double(f.normal.x), pack_double(f.normal.z), pack_double(f.normal.y))
+        # n.p[0]
+        s += "{}".format(pack_double(f.normal.dot(f.verts[0].co)))
 
     # voxels
     voxels=defaultdict(set)
-    for v in bm.verts:
-        pos_world = v.co
-        x = (pos_world.x + 128)
-        y = (pos_world.y + 128)
-        if x<0 or y<0 or x>256 or y>256:
-            raise Exception('Invalid vertex: {}'.format(pos_world))
-        voxel = int(math.floor(x/8)) + 32*int(math.floor(y/8))
-        if voxel<0 or voxel>32*32:
-            raise Exception('Invalid voxel id: {} for {}/{}'.format(voxel,x,y))
-        # find all overlapped faces
-        # register in voxel
-        for face in [f for f in v.link_faces if f.index not in all_inner_faces]:
-            voxels[voxel].add(face.index)
+    voxelized=set()
+    for i in range(len(faces)):
+        fbox = faces[i]['bbox']
+        f = faces[i]['face']
+        found = False
+        for vi in range(32):
+            for vj in range(32):
+                if voxel_bbox2d_intersects(8*vi-128,8*vj-128,8,fbox):
+                    voxel_id = vi + 32*vj
+                    if voxel_id==821:
+                        print("face:{} - verts: {}".format(f.index, f.verts))
+                        print("[{}]".format(fbox))
+                        for v in f.verts:
+                            print("{}: {}".format(v.index,v.co))
+                    # exclude detail faces (eg use logical face id)
+                    voxels[voxel_id].add(i)
+                    voxelized.add(f.index)
+                    found = True
+        if not found:
+            raise Exception('No matching voxel for face: {} [{}]'.format(f.index,fbox))
+    
+    print("voxelized faces: {}/{}".format(len(voxelized), len(faces)))
     #
     # voxel_w = 8
     # voxel_planes = (

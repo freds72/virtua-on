@@ -86,12 +86,11 @@ def export_layer(scale,l):
 
         # faces
         faces = []
-        for i in range(len(obdata.polygons)):
-            f=obdata.polygons[i]
+        for f in bm.faces:
             fs = ""
             color = 0x11
             is_dual_sided = False     
-            len_verts = len(f.loop_indices)
+            len_verts = len(f.verts)
             if len_verts>4:
                 raise Exception('Face: {} has too many vertices: {}'.format(i,len_verts))
             # color / dual sided flag     
@@ -112,21 +111,21 @@ def export_layer(scale,l):
             fs += "{:02x}".format(color)
 
             # + vertex id (= edge loop)
-            for li in f.loop_indices:
-                fs += "{:02x}".format(loop_vert[li]+1)
-            faces.append({'face': f, 'flip': False, 'data': fs})
+            for l in f.loops:
+                vi = loop_vert[l.index]+1
+                fs += "{:02x}".format(vi)
+            faces.append({'face': f, 'data': fs})
 
         # push face data to buffer (inc. dual sided faces)
         s += "{:02x}".format(len(faces))
         for f in faces:
             s += f['data']
-                    
-        # normals
-        s += "{:02x}".format(len(faces))
-        for f in faces:
-            flip = -1 if f['flip'] else 1
-            f = f['face']
-            s += "{}{}{}".format(pack_float(flip * f.normal.x), pack_float(flip * f.normal.z), pack_float(flip * f.normal.y))       
+            f = faces[i]['face']
+            # normal
+            s += "{}{}{}".format(pack_double(f.normal.x), pack_double(f.normal.z), pack_double(f.normal.y))
+            # n.p[0]
+            s += "{}".format(pack_double(f.normal.dot(f.verts[0].co)))
+                                
     return s
 
 # model data
