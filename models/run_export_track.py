@@ -4,10 +4,15 @@ import re
 import tempfile
 import random
 import math
+import socket
 
 local_dir = os.path.dirname(os.path.realpath(__file__))
 blender_dir = os.path.expandvars("%programfiles%/Blender Foundation/Blender")
-pico_dir = os.path.join("D:","pico-8_0.1.12c")
+pico_dir = ""
+if socket.gethostname()=="FRWS3706":
+    pico_dir = os.path.join("C:",os.path.sep,"pico-8_win32")
+else:
+    pico_dir = os.path.join("D:",os.path.sep,"pico-8_0.1.12c")
 
 def call(args):
     proc = Popen(args, stdout=PIPE, stderr=PIPE)
