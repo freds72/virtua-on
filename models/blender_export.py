@@ -123,8 +123,6 @@ def export_layer(scale,l):
             f = faces[i]['face']
             # normal
             s += "{}{}{}".format(pack_double(f.normal.x), pack_double(f.normal.z), pack_double(f.normal.y))
-            # n.p[0]
-            s += "{}".format(pack_double(f.normal.dot(f.verts[0].co)))
                                 
     return s
 

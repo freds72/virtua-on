@@ -231,16 +231,12 @@ def export_object(obcontext):
     s += pack_variant(len(faces))
     for i in range(len(faces)):
         s += faces[i]['data']
-        # todo: don't export for non-track faces
         f = faces[i]['face']
         # normal
         s += "{}{}{}".format(pack_double(f.normal.x), pack_double(f.normal.z), pack_double(f.normal.y))
-        # n.p[0]
-        s += "{}".format(pack_double(f.normal.dot(f.verts[0].co)))
 
     # voxels
     voxels=defaultdict(set)
-    voxelized=set()
     for i in range(len(faces)):
         fbox = faces[i]['bbox']
         f = faces[i]['face']
@@ -249,50 +245,12 @@ def export_object(obcontext):
             for vj in range(32):
                 if voxel_bbox2d_intersects(8*vi-128,8*vj-128,8,fbox):
                     voxel_id = vi + 32*vj
-                    if voxel_id==821:
-                        print("face:{} - verts: {}".format(f.index, f.verts))
-                        print("[{}]".format(fbox))
-                        for v in f.verts:
-                            print("{}: {}".format(v.index,v.co))
                     # exclude detail faces (eg use logical face id)
                     voxels[voxel_id].add(i)
-                    voxelized.add(f.index)
                     found = True
         if not found:
             raise Exception('No matching voxel for face: {} [{}]'.format(f.index,fbox))
-    
-    print("voxelized faces: {}/{}".format(len(voxelized), len(faces)))
-    #
-    # voxel_w = 8
-    # voxel_planes = (
-    #     Vector((0,0,0)),(0,-1,0),
-    #     Vector((voxel_w,0,0)),(1,0,0),
-    #     Vector((voxel_w,voxel_w,0)),(0,1,0),
-    #     Vector((0,voxel_w,0)),(-1,0,0)
-    # )
-    # # ref: https://blender.stackexchange.com/questions/75845/wrong-shading-as-a-result-of-bisect-plane-in-bmesh
-    # for i in range(len(faces)):
-    #     f = faces[i]['face']
-    #     fbox = faces[i]['bbox']
-    #     for vi in range(32):
-    #         vx = vi-128
-    #         for vj in range(32):
-    #             vy = vj-128
-    #             if voxel_bbox2d_intersects(vx,vy,voxel_w,fbox):
-    #                 fmesh = bmesh.ops.duplicate(bm, geom=f.verts[:] + f.edges[:] + (f))
-
-    #                 # clip face against voxel borders
-    #                 for (plane_co, plane_no) in voxel_planes:
-    #                     voxel_p = plane_co + (vx,vy,0)
-    #                     voxel_n = plane_no
-    #                     res = bmesh.ops.bisect_plane(fmesh, geom = fmesh.verts[:] + fmesh.edges[:] + fmesh.faces[:], dist = 0, plane_co = voxel_p,plane_no = voxel_n, clear_outer = True)
-    #                     fmesh.ops.split_edges(fmesh, edges=[e for e in ret['geom_cut'] if isinstance(e, bmesh.types.BMEdge)])                
-    #                 # any match
-    #                 if len(fmesh.verts)>0:
-    #                     voxel_id = vi + 32*vj
-    #                     print("voxel[{}] += face: {}".format(voxel_id,face.index))
-    #                     voxels[voxel_id].add(face.index)
-
+       
     # export voxels
     # number of cells
     s += pack_variant(len(voxels.keys()))
