@@ -251,8 +251,8 @@ function make_plyr(p)
 	}
 end
 
-local cam=make_cam(63.5,63.5,64)
-local plyr=make_plyr({0,0,0})
+local cam=make_cam(63.5,63.5,63.5)
+local plyr=make_plyr({0,0,69.73})
 local plane=make_plane(8)
 local all_models={}
 
@@ -266,7 +266,7 @@ function project_poly(p,c,scale)
 		local x1,y1=cam:project(p[2])
 		for i=3,#p do
 			local x2,y2=cam:project(p[i])
-		 	trifill(x0,y0,x1,y1,x2,y2,c,scale or 1)
+		 	trifill(x0,y0,x1,y1,x2,y2,c)
 			x1,y1=x2,y2
 		end
 	end
@@ -322,7 +322,8 @@ function _update()
 end
 
 local sessionid=0
-local k_far,k_near=1,8
+local k_far,k_near=0,2
+local k_right,k_left=4,8
 local z_near=0.05
 local current_face
 
@@ -330,20 +331,21 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
-			local z,outcode,verts=0,0,{}
+			local z,outcode,verts,is_clipped=0,0xffff,{},0
 			-- project vertices
 			for _,vi in pairs(face.vi) do
 				local a=v_cache(vi)
-				z+=a[3]					
-				outcode=bor(outcode,a[3]>z_near and k_far or k_near)
+				z+=a[3]
+				outcode=band(outcode,a.outcode)
+				-- behind near plane?
+				is_clipped+=band(a.outcode,2)
 				verts[#verts+1]=a
-			end			
+			end
 			-- mix of near/far verts?
-			if band(outcode,1)==1 then
+			if outcode==0 then
 				-- mix of near+far vertices?
-				local is_clipped
-				if(band(outcode,0x9)==9) verts=z_poly_clip(z_near,verts) is_clipped=true
-				if(#verts>2) out[#out+1]={key=#verts/z,f=face,v=verts,clipped=is_clipped,dist=dist}
+				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+				if(#verts>2) out[#out+1]={key=#verts/z,f=face,v=verts,clipped=is_clipped>0 or nil,dist=dist}
 			end
 			face.session=sessionid	
 		end
@@ -365,6 +367,18 @@ function collect_model_faces(model,m,out)
 			-- world to cam
 			v_add(a,cam.pos,-1)
 			m_x_v(cam.m,a)
+
+			local ax,az=a[1],a[3]
+			local outcode=1--az>z_near and k_far or k_near
+			--[[
+			if az>z_near then
+				outcode=k_far
+				if ax>az then outcode+=k_right
+				elseif -ax>az then outcode+=k_left
+				end	
+			end
+			]]
+			a.outcode=outcode
 			p[k]=a
 		end
 		return a
@@ -378,8 +392,7 @@ function draw_polys(polys,v_cache)
  	fillp(0xa5a5)
 	for i=1,#polys do
 		local d=polys[i]
-		-- render far away tiles at half rez
-		project_poly(d.v,d.f.c,d.dist and d.dist>0 and 2)
+		project_poly(d.v,d.f.c)
 		-- details?
 		if d.f.inner and d.dist<2 then					
 			for _,face in pairs(d.f.inner) do
@@ -409,6 +422,14 @@ function _draw()
 			-- world to cam
 			a=make_v(cam.pos,track.v[k])
 			m_x_v(cam.m,a)
+
+			local ax,az=a[1],a[3]
+			local outcode=az>z_near and k_far or k_near
+			if ax>az then outcode+=k_right
+			elseif -ax>az then outcode+=k_left
+			end	
+			a.outcode=outcode
+
 			p[k]=a
 		end
 		return a
@@ -446,11 +467,13 @@ function _draw()
 	]]
 
 	local out={}
+	local total_faces=0
 	-- get visible voxels
 	for k,dist in pairs(tiles) do
 	--for k,_ in pairs(track.voxels) do
 		local faces=track.voxels[k]
 		if faces then
+			total_faces+=#faces
 			collect_faces(faces,cam.pos,v_cache,out,dist)
 		end 
 	end
@@ -460,6 +483,7 @@ function _draw()
 	draw_polys(out,v_cache)
 
 	-- car
+	--[[
 	out={}
 	local pos,angle=plyr:get_pos()
 	local m=make_m_from_euler(0,time()/5,0)
@@ -467,9 +491,10 @@ function _draw()
 	collect_model_faces(all_models["car"].lods[1],m,out)
  	sort(out)
 	draw_polys(out)
+	]]
 
 	local cpu=flr(1000*stat(1))/10
-	cpu=cpu.." ▤"..stat(0).." █:"..#out.."\n"..cam.pos[1].."/"..cam.pos[3]
+	cpu=cpu.." ▤"..stat(0).." █:"..#out.."/"..total_faces.."\n"..cam.pos[1].."/"..cam.pos[3]
 	print(cpu,2,3,5)
 	print(cpu,2,2,7)
 
@@ -632,49 +657,44 @@ unpack_models()
 -->8
 -- trifill & clipping
 -- by @p01
-function p01_trapeze_h(l,r,lt,rt,y0,y1,scale)
+function p01_trapeze_h(l,r,lt,rt,y0,y1)
   lt,rt=(lt-l)/(y1-y0),(rt-r)/(y1-y0)
   if(y0<0)l,r,y0=l-y0*lt,r-y0*rt,0
-  lt*=scale
-  rt*=scale
-  local yy0=flr(scale/2)
-  for y0=y0,min(y1,128),scale do
-   rectfill(l,y0,r,y0+yy0)
+  for y0=y0,min(y1,127) do
+   rectfill(l,y0,r,y0)
    l+=lt
    r+=rt
   end
 end
-function p01_trapeze_w(t,b,tt,bt,x0,x1,scale)
+function p01_trapeze_w(t,b,tt,bt,x0,x1)
  tt,bt=(tt-t)/(x1-x0),(bt-b)/(x1-x0)
  if(x0<0)t,b,x0=t-x0*tt,b-x0*bt,0
- tt*=scale
- bt*=scale
- local xx0=flr(scale/2)
- for x0=x0,min(x1,128),scale do
-  rectfill(x0,t,x0+xx0,b)
+ for x0=x0,min(x1,127) do
+  rectfill(x0,t,x0,b)
   t+=tt
   b+=bt
  end
 end
 
-function trifill(x0,y0,x1,y1,x2,y2,col,scale)
+function trifill(x0,y0,x1,y1,x2,y2,col)
  color(col)
  if(y1<y0)x0,x1,y0,y1=x1,x0,y1,y0
  if(y2<y0)x0,x2,y0,y2=x2,x0,y2,y0
  if(y2<y1)x1,x2,y1,y2=x2,x1,y2,y1
  if max(x2,max(x1,x0))-min(x2,min(x1,x0)) > y2-y0 then
   col=x0+(x2-x0)/(y2-y0)*(y1-y0)
-  p01_trapeze_h(x0,x0,x1,col,y0,y1,scale)
-  p01_trapeze_h(x1,col,x2,x2,y1,y2,scale)
+  p01_trapeze_h(x0,x0,x1,col,y0,y1)
+  p01_trapeze_h(x1,col,x2,x2,y1,y2)
  else
   if(x1<x0)x0,x1,y0,y1=x1,x0,y1,y0
   if(x2<x0)x0,x2,y0,y2=x2,x0,y2,y0
   if(x2<x1)x1,x2,y1,y2=x2,x1,y2,y1
   col=y0+(y2-y0)/(x2-x0)*(x1-x0)
-  p01_trapeze_w(y0,y0,y1,col,x0,x1,scale)
-  p01_trapeze_w(y1,col,y2,y2,x1,x2,scale)
+  p01_trapeze_w(y0,y0,y1,col,x0,x1)
+  p01_trapeze_w(y1,col,y2,y2,x1,x2)
  end
 end
+
 --[[
 function trifill(x0,y0,x1,y1,x2,y2,col)
 	line(x0,y0,x1,y1,col)
@@ -682,7 +702,6 @@ function trifill(x0,y0,x1,y1,x2,y2,col)
 	line(x0,y0)
 end
 ]]
-
 -- clipping
 function plane_poly_clip(n,v)
 	local dist,allin={},0
