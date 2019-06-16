@@ -407,11 +407,11 @@ function _draw()
 
 	-- background
 	local x0=-(angle*128)%128
- map(0,0,x0,0,16,16)
- if x0>0 then
- 	x0-=128
-	 map(0,0,x0,0,16,16)
- end
+ 	map(0,0,x0,0,16,8)
+ 	if x0>0 then
+ 		x0-=128
+	 	map(0,0,x0,0,16,8)
+ 	end
 
 	local p={}
 	local function v_cache(k)

@@ -91,7 +91,7 @@ genesis_to_p8_colors = {
     "a": 3, # dark green
     "b": 11, # light green
     "c": 3, # dark green
-    "d": 15, # light yellow
+    "d": 4, # light yellow
     "e": 9, # dark yellow
     "f": 4, # brown
 }
@@ -114,7 +114,7 @@ def export_face(obcontext, f, loop_vert, inner_faces):
     color = 0x11
     len_verts = len(f.loops)
     if len_verts>4:
-        raise Exception('Face: {} has too many vertices: {}'.format(i,len_verts))
+        raise Exception('Face has too many vertices: {}'.format(len_verts))
     if len(obcontext.material_slots)>0:
         slot = obcontext.material_slots[f.material_index]
         mat = slot.material
