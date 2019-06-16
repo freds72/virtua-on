@@ -82,7 +82,7 @@ genesis_to_p8_colors = {
     "1": 4, # dark brown
     "2": 7, # white
     "3": 8, # red
-    "4": 1, # dark blue
+    "4": 12, # dark blue
     "5": 10, # yellow
     "6": 5, # dark grey
     "7": 6, # light bluish grey
