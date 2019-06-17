@@ -25,14 +25,55 @@ function v_add(v,dv,scale)
 	v[2]+=scale*dv[2]
 	v[3]+=scale*dv[3]
 end
-function v_min(a,b)
-	return {min(a[1],b[1]),min(a[2],b[2]),min(a[3],b[3])}
-end
-function v_max(a,b)
-	return {max(a[1],b[1]),max(a[2],b[2]),max(a[3],b[3])}
+function v_len(v)
+	local x,y,z=v[1],v[2],v[3]
+	scale=abs(x)>abs(y) and x or y
+	scale=abs(scale)>abs(z) and scale or z
+	if(scale==0) return 0
+	x/=scale
+	y/=scale
+	z/=scale
+	return abs(scale)*(x*x+y*y+z*z)^.5
 end
 
 local v_up={0,1,0}
+
+-- quaternion
+function make_q(v,angle)
+	angle/=2
+	-- fix pico sin
+	local s=-sin(angle)
+	return {v[1]*s,
+	        v[2]*s,
+	        v[3]*s,
+	        cos(angle)}
+end
+function q_clone(q)
+	return {q[1],q[2],q[3],q[4]}
+end
+
+function q_x_q(a,b)
+	local qax,qay,qaz,qaw=a[1],a[2],a[3],a[4]
+	local qbx,qby,qbz,qbw=b[1],b[2],b[3],b[4]
+        
+	a[1]=qax*qbw+qaw*qbx+qay*qbz-qaz*qby
+	a[2]=qay*qbw+qaw*qby+qaz*qbx-qax*qbz
+	a[3]=qaz*qbw+qaw*qbz+qax*qby-qay*qbx
+	a[4]=qaw*qbw-qax*qbx-qay*qby-qaz*qbz
+end
+function m_from_q(q)
+	local x,y,z,w=q[1],q[2],q[3],q[4]
+	local x2,y2,z2=x+x,y+y,z+z
+	local xx,xy,xz=x*x2,x*y2,x*z2
+	local yy,yz,zz=y*y2,y*z2,z*z2
+	local wx,wy,wz=w*x2,w*y2,w*z2
+
+	return {
+		1-(yy+zz),xy+wz,xz-wy,0,
+		xy-wz,1-(xx+zz),yz+wx,0,
+		xz+wy,yz-wx,1-(xx+yy),0,
+		0,0,0,1}
+end
 
 -- matrix functions
 function m_x_v(m,v)
@@ -138,7 +179,7 @@ end
 
 -->8
 -- main engine
-function make_cam(x0,y0,focal)
+function make_cam(hw,hh,focal)
 	local angle,angles=0,{}
 	for i=0,15 do
 		add(angles,atan2(7.5,i-7.5))
@@ -154,7 +195,19 @@ function make_cam(x0,y0,focal)
 			-- inverse view matrix
 		   	m_inv(m)
    			self.m=m
-  		end,
+		end,
+		project_poly=function(self,p,c)
+			local p0,p1=p[1],p[2]
+			-- magic constants = 89.4% vs. 90.9%
+			local x0,y0=63.5+ceil(63.5*p0[1]/p0[3]),63.5-ceil(63.5*p0[2]/p0[3])
+			local x1,y1=63.5+ceil(focal*p1[1]/p1[3]),63.5-ceil(63.5*p1[2]/p1[3])
+			for i=3,#p do
+				local p2=p[i]
+				local x2,y2=63.5+ceil(63.5*p2[1]/p2[3]),63.5-ceil(63.5*p2[2]/p2[3])
+				trifill(x0,y0,x1,y1,x2,y2,c)
+				x1,y1=x2,y2
+			end
+		end,
 		visible_tiles=function(self)
   			local x,y=self.pos[1]/8+16,self.pos[3]/8+16
    			local x0,y0=flr(x),flr(y)
@@ -208,7 +261,7 @@ function make_plyr(p,angle)
 	local velocity=0
 	return {
 		get_pos=function()
-	 		return pos,angle,make_m_from_euler(0.0,angle,0)
+	 		return pos,angle,m_from_q(make_q(oldf and oldf.n or v_up,angle))
 		 end,
 		handle_input=function()
 			local dx,dy=0,0
@@ -249,19 +302,6 @@ local track
 
 local dither_pat={0xffff,0x7fff,0x7fdf,0x5fdf,0x5f5f,0x5b5f,0x5b5e,0x5a5e,0x5a5a,0x1a5a,0x1a4a,0x0a4a,0x0a0a,0x020a,0x0208,0x0000}
 
-function project_poly(p,c,scale)
-	if #p>2 then
-		local p0,p1=p[1],p[2]
-		local x0,y0=63.5+ceil(63.5*p0[1]/p0[3]),63.5-ceil(63.5*p0[2]/p0[3])
-		local x1,y1=63.5+ceil(63.5*p1[1]/p1[3]),63.5-ceil(63.5*p1[2]/p1[3])
-		for i=3,#p do
-			local p2=p[i]
-			local x2,y2=63.5+ceil(63.5*p2[1]/p2[3]),63.5-ceil(63.5*p2[2]/p2[3])
-		 	trifill(x0,y0,x1,y1,x2,y2,c)
-			x1,y1=x2,y2
-		end
-	end
-end
 
 function is_inside(p,f)
 	local v,vi=track.v,f.vi
@@ -322,10 +362,11 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
-			local z,outcode,verts,is_clipped=0,0xffff,{},0
+			local z,y,outcode,verts,is_clipped=0,0,0xffff,{},0
 			-- project vertices
 			for _,vi in pairs(face.vi) do
 				local a=v_cache(vi)
+				y+=a[2]
 				z+=a[3]
 				outcode=band(outcode,a.outcode)
 				-- behind near plane?
@@ -336,7 +377,11 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 			if outcode==0 then
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
-				if(#verts>2) out[#out+1]={key=#verts/z,f=face,v=verts,clipped=is_clipped>0 or nil,dist=dist}
+				if #verts>2 then
+					y/=#verts
+					z/=#verts
+					out[#out+1]={key=1/(y*y+z*z),f=face,v=verts,clipped=is_clipped>0 or nil,dist=dist}
+				end
 			end
 			face.session=sessionid	
 		end
@@ -383,7 +428,7 @@ function draw_polys(polys,v_cache)
  	fillp(0xa5a5)	
 	for i=1,#polys do
 		local d=polys[i]
-		project_poly(d.v,d.f.c)
+		cam:project_poly(d.v,d.f.c)
 		-- details?
 		if d.f.inner and d.dist<2 then					
 			for _,face in pairs(d.f.inner) do
@@ -393,7 +438,7 @@ function draw_polys(polys,v_cache)
 					verts[#verts+1]=a
 				end
 				if(d.clipped) verts=z_poly_clip(z_near,verts)
-				project_poly(verts,face.c)
+				if(#verts>2) cam:project_poly(verts,face.c)
 			end
 		end
 	end
@@ -492,7 +537,8 @@ function _draw()
 	]]
 
 	local cpu=flr(1000*stat(1))/10
-	cpu=cpu.." ▤"..stat(0).." █:"..#out.."/"..total_faces.."\n"..cam.pos[1].."/"..cam.pos[3]
+	local mem=flr(100*stat(0))/10
+	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces.."\n"..cam.pos[1].."/"..cam.pos[3]
 	print(cpu,2,3,5)
 	print(cpu,2,2,7)
 
