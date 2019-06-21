@@ -107,7 +107,15 @@ def verts_to_bbox2d(verts):
     ys = [v.co.y for v in verts]
     return (min(xs), min(ys), max(xs), max(ys))
 
-def export_face(obcontext, f, loop_vert, inner_faces):
+def find_faces_by_group(bm, obcontext, name):
+    if name in obcontext.vertex_groups:
+        obdata = obcontext.data
+        group_idx = obcontext.vertex_groups[name].index
+        group_verts = [v.index for v in obdata.vertices if group_idx in [ vg.group for vg in v.groups ] ]
+
+        return [f for f in bm.faces if len(f.verts)==len([v for v in f.verts if v.index in group_verts])]    
+
+def export_face(obcontext, f, loop_vert, inner_faces, track_faces):
     fs = ""
     # default values
     is_dual_sided = False
@@ -124,11 +132,13 @@ def export_face(obcontext, f, loop_vert, inner_faces):
 
     has_inner_faces = inner_faces is not None and len(inner_faces)>0
     # face flags bit layout:
+    # track face:   16
     # inner faces:  8
     # track:        4 (todo)
     # tri/quad:     2
     # dual-side:    1
     fs += "{:02x}".format(
+        (16 if track_faces is not None and f in track_faces else 0) + 
         (8 if has_inner_faces else 0) + 
         (2 if len_verts==4 else 0) + 
         (1 if is_dual_sided else 0))
@@ -144,7 +154,7 @@ def export_face(obcontext, f, loop_vert, inner_faces):
     if has_inner_faces:
         fs += pack_variant(len(inner_faces))
         for inner_face in inner_faces:
-            fs += export_face(obcontext, inner_face, loop_vert, None)
+            fs += export_face(obcontext, inner_face, loop_vert, None, None)
 
     return fs
 
@@ -171,14 +181,11 @@ def export_object(obcontext):
         if v.index==1850:
             print(v.co)
 
-    # find detail vertices
-    detail_faces=[]
-    if 'DETAIL_FACE' in obcontext.vertex_groups:
-        group_idx = obcontext.vertex_groups['DETAIL_FACE'].index
-        group_verts = [v.index for v in obdata.vertices if group_idx in [ vg.group for vg in v.groups ] ]
+    # find detail faces
+    detail_faces=find_faces_by_group(bm, obcontext, 'DETAIL_FACE')
 
-        # find detail faces
-        detail_faces = [f for f in bm.faces if len(f.verts)==len([v for v in f.verts if v.index in group_verts])]    
+    # find solid faces
+    track_faces=find_faces_by_group(bm, obcontext, 'TRACK_FACE')
 
     # all other faces
     other_faces = [f for f in bm.faces if f.index not in [f.index for f in detail_faces]]
@@ -224,7 +231,7 @@ def export_object(obcontext):
         inner_faces = inner_per_face.get(f.index)
         if inner_faces and len(inner_faces)>127:
             raise Exception('Face: {} too many inner faces: {}'.format(f.index,len(inner_faces)))
-        face_data = export_face(obcontext, f, loop_vert, inner_faces)
+        face_data = export_face(obcontext, f, loop_vert, inner_faces, track_faces)
         faces.append({'face': f, 'data': face_data, 'bbox': verts_to_bbox2d(f.verts)})
 
     # push face data to buffer (inc. dual sided faces)
