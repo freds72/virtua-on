@@ -125,6 +125,7 @@ end
 
 -- sort
 -- https://github.com/morgan3d/misc/tree/master/p8sort
+-- 
 function sort(data)
  local n = #data 
  if(n<2) return
@@ -260,6 +261,7 @@ function make_plyr(p,angle)
 	local pos=v_clone(p)
 	local oldf
 	local velocity=0
+	local vangle=0
 	return {
 		get_pos=function()
 	 		return pos,angle,m_from_q(make_q(oldf and oldf.n or v_up,angle))
@@ -271,12 +273,15 @@ function make_plyr(p,angle)
 			if(btn(0)) dy=-1
 			if(btn(1)) dy=1
 		
-			angle+=dy/64
+			vangle+=dy
 			-- if(oldf) dx/=8
-			velocity+=0.25*dx
+			velocity+=0.33*dx
 		end,
 		update=function()
-  			velocity*=0.8
+  	vangle*=0.8
+  	velocity*=0.8
+
+			angle+=vangle/512
 
 			-- update orientation matrix
 			local m=make_m_from_euler(0,angle,0)
@@ -297,6 +302,7 @@ end
 local cam=make_cam(63.5,63.5,63.5)
 local plyr=make_plyr({-24,0,-6},0)
 local plane=make_plane(8)
+local time_t=0
 local all_models={}
 
 local track
@@ -346,11 +352,14 @@ function _init()
 end
 
 function _update()
+	time_t+=1
+
 	plyr:handle_input()
 	
 	plyr:update()
 	
 	cam:track(plyr:get_pos())
+	
 end
 
 local sessionid=0
@@ -360,6 +369,7 @@ local z_near=0.05
 local current_face
 
 function collect_faces(faces,cam_pos,v_cache,out,dist)
+	local n=#out+1
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
@@ -382,7 +392,9 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
-					out[#out+1]={key=1/(y*y+z*z),f=face,v=verts,clipped=is_clipped>0 or nil,dist=dist}
+					out[n]={key=1/(y*y+z*z),f=face,v=verts,clipped=is_clipped>0 or nil,dist=dist}
+				 -- 0.1% faster vs [#out+1]
+				 n+=1
 				end
 			end
 			face.session=sessionid	
@@ -427,7 +439,7 @@ end
 
 function draw_polys(polys,v_cache)
 	-- all poly are encoded with 2 colors
- 	fillp(0xa5a5)	
+ fillp(0xa5a5)	
 	for i=1,#polys do
 		local d=polys[i]
 		cam:project_poly(d.v,d.f.c)
@@ -435,9 +447,8 @@ function draw_polys(polys,v_cache)
 		if d.f.inner and d.dist<2 then					
 			for _,face in pairs(d.f.inner) do
 				local verts={}
-				for _,vi in pairs(face.vi) do
-					local a=v_cache(vi)
-					verts[#verts+1]=a
+				for ki,vi in pairs(face.vi) do
+					verts[ki]=v_cache(vi)
 				end
 				if(d.clipped) verts=z_poly_clip(z_near,verts)
 				if(#verts>2) cam:project_poly(verts,face.c)
@@ -453,7 +464,7 @@ function _draw()
 	local pos,angle=plyr:get_pos()
 
 	-- background
- cls(3)
+ 	cls(3)
 	local x0=-(angle*128)%128
  	map(0,0,x0,0,16,8)
  	if x0>0 then
@@ -467,12 +478,9 @@ function _draw()
 		local a=p[k]
 		if not a then
 			-- world to cam
-			--
 			local v=track.v[k]
 			local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
-	  a={m[1]*x+m[5]*y+m[9]*z,m[2]*x+m[6]*y+m[10]*z,m[3]*x+m[7]*y+m[11]*z}
-
-			--a=m_x_v2(cam.m,track.v[k])
+			a={m[1]*x+m[5]*y+m[9]*z,m[2]*x+m[6]*y+m[10]*z,m[3]*x+m[7]*y+m[11]*z}
 
 			local ax,az=a[1],a[3]
 			local outcode=az>z_near and k_far or k_near
@@ -531,9 +539,10 @@ function _draw()
 	
 	
 	-- track
+
  sort(out)
 	draw_polys(out,v_cache)
- 
+
 	-- car
 	--[[
 	out={}
@@ -547,10 +556,10 @@ function _draw()
  
 	local cpu=flr(1000*stat(1))/10
 	local mem=flr(100*stat(0))/10
-	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces.."\n"..cam.pos[1].."/"..cam.pos[3]
-	print(cpu,2,3,5)
-	print(cpu,2,2,7)
+	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces--.."\n"..cam.pos[1].."/"..cam.pos[3]
+	printb(cpu,2,2,6,5)
 
+ printb("lap time\n"..time_tostr(time_t),90,2,7,0)
 end
 
 -->8
@@ -763,7 +772,7 @@ end
 ]]
 function z_poly_clip(znear,v)
 	local res={}
-	local v0,d0,v1,d1,t,r=v[#v]
+	local v0,v1,d1,t,r=v[#v]
 	local d0=-znear+v0[3]
  	-- use local closure
  	local clip_line=function()
@@ -779,11 +788,32 @@ function z_poly_clip(znear,v)
 			if(d0<=0) clip_line()
 			res[#res+1]=v1
 		elseif d0>0 then
-   		clip_line()
+   clip_line()
 		end
 		v0,d0=v1,d1
 	end
 	return res
+end
+
+-->8
+-- print helpers
+function padding(n)
+	n=tostr(flr(min(n,99)))
+	return sub("00",1,2-#n)..n
+end
+
+function time_tostr(t)
+	if(t==32000) return "--"
+	-- frames per sec
+	local s=padding(flr(t/30)%60).."''"..padding(flr(10*t/3)%100)
+	-- more than a minute?
+	if(t>1800) s=padding(flr(t/1800)).."'"..s
+	return s
+end
+
+function printb(s,x,y,c1,c2)
+	?s,x,y+1,c2 or 1
+	?s,x,y,c1
 end
 
 __gfx__
