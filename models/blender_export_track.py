@@ -79,6 +79,7 @@ def diffuse_to_p8color(rgb):
         raise Exception('Unknown color: 0x{}'.format(h))
 
 genesis_to_p8_colors = {
+    "0": 0, # black
     "1": 4, # dark brown
     "2": 7, # white
     "3": 8, # red
