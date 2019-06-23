@@ -133,7 +133,7 @@ def export_face(obcontext, f, loop_vert, inner_faces, track_faces):
 
     has_inner_faces = inner_faces is not None and len(inner_faces)>0
     # face flags bit layout:
-    # track face:   16
+    # ground face:   16
     # inner faces:  8
     # track:        4 (todo)
     # tri/quad:     2
