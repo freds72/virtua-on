@@ -25,16 +25,17 @@ function v_add(v,dv,scale)
 	v[2]+=scale*dv[2]
 	v[3]+=scale*dv[3]
 end
-function v_len(v)
-	local x,y,z=v[1],v[2],v[3]
-	scale=abs(x)>abs(y) and x or y
-	scale=abs(scale)>abs(z) and scale or z
-	if(scale==0) return 0
-	x/=scale
-	y/=scale
-	z/=scale
-	return abs(scale)*(x*x+y*y+z*z)^.5
+function v_normz(v)
+	local d=v_dot(v,v)
+	if d>0.001 then
+		d=d^.5
+		v[1]/=d
+		v[2]/=d
+		v[3]/=d
+	end
+	return d
 end
+
 
 local v_up={0,1,0}
 
@@ -278,8 +279,8 @@ function make_plyr(p,angle)
 			velocity+=0.33*dx
 		end,
 		update=function()
-  	vangle*=0.8
-  	velocity*=0.8
+  			vangle*=0.8
+  			velocity*=0.8
 
 			angle+=vangle/512
 
@@ -295,6 +296,13 @@ function make_plyr(p,angle)
 			end
 			-- above 0
 			pos[2]=max(pos[2])+0.15
+			-- collision
+			if oldf and oldf.borders then
+				local hit,force=face_collide(oldf,pos,0.25)
+				if hit then
+					v_add(pos,force)
+				end
+			end
 		end
 	}
 end
@@ -345,6 +353,18 @@ function find_face(p,oldf)
 		end
 	end
 	-- not found
+end
+function face_collide(f,p,r)
+	local force,hit={0,0,0}
+	for _,b in pairs(f.borders) do
+		local pv=make_v(b.v,p)
+		local dist=v_dot(pv,b.n)
+		if dist<r then
+			hit=true
+			v_add(force,b.n,r-dist)
+		end
+	end
+	return hit,force
 end
 
 function _init()
@@ -442,7 +462,7 @@ function draw_polys(polys,v_cache)
  fillp(0xa5a5)	
 	for i=1,#polys do
 		local d=polys[i]
-		cam:project_poly(d.v,d.f.c)
+		cam:project_poly(d.v,d.f.borders and 8 or d.f.c)
 		-- details?
 		if d.f.inner and d.dist<2 then					
 			for _,face in pairs(d.f.inner) do
@@ -540,8 +560,28 @@ function _draw()
 	
 	-- track
 
- sort(out)
+    sort(out)
 	draw_polys(out,v_cache)
+
+	for k,dist in pairs(tiles) do
+		local faces=track.voxels[k]
+		if faces then
+			for _,f in pairs(faces) do
+				if f.borders then
+					for _,b in pairs(f.borders) do
+						local x,y,z=b.v[1]+cx,b.v[2]+cy,b.v[3]+cz
+						a={m[1]*x+m[5]*y+m[9]*z,m[2]*x+m[6]*y+m[10]*z,m[3]*x+m[7]*y+m[11]*z}
+						-- cam to screen
+						local w0=64/a[3]
+						if w0>0 then
+							local x0,y0=64+a[1]*w0,64-a[2]*w0
+							circ(x0,y0,2,8)
+						end
+					end
+				end
+			end
+		end
+	end
 
 	-- car
 	--[[
@@ -655,6 +695,24 @@ function unpack_model(model,scale)
 				end
 				add(f.inner,df)
 			end)
+		end
+		-- collision planes?
+		local borders=band(shr(f.flags,5),0x7)		
+		if borders>0 then
+			f.borders={}
+			local bi=unpack_int()
+			for i=0,borders-1 do
+				-- vertex index
+				local v0=band(shr(bi,i*4),0xf)
+				local v1=(v0+1)%#f.vi
+				-- get border vectors
+				v0,v1=model.v[f.vi[v0+1]],model.v[f.vi[v1+1]]
+				-- make a 2d plane vector
+				local bn=make_v(v1,v0)
+				bn[2]=0
+				v_normz(bn)
+				add(f.borders,{v=v0,n={bn[3],0,-bn[1]}})
+			end
 		end
 		-- normal
 		f.n={unpack_double(),unpack_double(),unpack_double()}

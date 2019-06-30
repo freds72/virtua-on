@@ -134,20 +134,19 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
     # find collision edges
     borders = []
     if vgroups is not None and f in ground_faces:
-        for l in f.loops:
-            e = l.edge
-            e0 = e.verts[0]
-            e1 = e.verts[1]
+        for i in range(len(verts)):
+            e0 = verts[i]
+            e1 = verts[(i+1)%len(verts)]
             # get vertex groups
-            if e0.index in vgroups and e1.index in vgroups:
-                g0 = vgroups[e0.index]
-                g1 = vgroups[e1.index]
+            if e0 in vgroups and e1 in vgroups:
+                g0 = vgroups[e0]
+                g1 = vgroups[e1]
                 # are edges part of the same group
                 cg = set(g0).intersection(g1)
                 if len(cg)>1:
-                    raise Exception('Multiple vertex groups for the same edge ({},{}): {} x {} -> {}'.format(e0.co,e1.co,g0,g1,cg))
+                    raise Exception('Multiple vertex groups for the same edge ({},{}): {} x {} -> {}'.format(e0,e1,g0,g1,cg))
                 if len(cg)==1:
-                    vi = verts.index(e0.index)
+                    vi = verts.index(e0)
                     borders.append(vi)
     if len(borders)>2:
         raise Exception('Face: {} has too many collision borders: {}/2'.format(f.index, len(borders)))
@@ -181,6 +180,7 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
 
     # border indices?
     if len(borders)>0:
+        print("{} -> {}", verts, borders)
         fs += "{:02x}".format(
            borders[0] +
            (borders[1]<<4 if len(borders)>1 else 0)
