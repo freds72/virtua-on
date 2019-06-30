@@ -202,11 +202,12 @@ function make_cam()
 		project_poly=function(self,p,c)
 			local p0,p1=p[1],p[2]
 			-- magic constants = 89.4% vs. 90.9%
-			local x0,y0=63.5+ceil(63.5*p0[1]/p0[3]),63.5-ceil(63.5*p0[2]/p0[3])
-			local x1,y1=63.5+ceil(63.5*p1[1]/p1[3]),63.5-ceil(63.5*p1[2]/p1[3])
+			-- shl = 79.7% vs. 80.6%
+			local x0,y0=63.5+flr(shl(p0[1]/p0[3],6)),63.5-flr(shl(p0[2]/p0[3],6))
+			local x1,y1=63.5+flr(shl(p1[1]/p1[3],6)),63.5-flr(shl(p1[2]/p1[3],6))
 			for i=3,#p do
 				local p2=p[i]
-				local x2,y2=63.5+ceil(63.5*p2[1]/p2[3]),63.5-ceil(63.5*p2[2]/p2[3])
+				local x2,y2=63.5+flr(shl(p2[1]/p2[3],6)),63.5-flr(shl(p2[2]/p2[3],6))
 				trifill(x0,y0,x1,y1,x2,y2,c)
 				x1,y1=x2,y2
 			end
@@ -462,7 +463,7 @@ function draw_polys(polys,v_cache)
  fillp(0xa5a5)	
 	for i=1,#polys do
 		local d=polys[i]
-		cam:project_poly(d.v,d.f.borders and 8 or d.f.c)
+		cam:project_poly(d.v,d.f.c)
 		-- details?
 		if d.f.inner and d.dist<2 then					
 			for _,face in pairs(d.f.inner) do
@@ -563,6 +564,7 @@ function _draw()
     sort(out)
 	draw_polys(out,v_cache)
 
+	--[[
 	for k,dist in pairs(tiles) do
 		local faces=track.voxels[k]
 		if faces then
@@ -582,6 +584,7 @@ function _draw()
 			end
 		end
 	end
+	]]
 
 	-- car
 	--[[
