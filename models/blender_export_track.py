@@ -116,14 +116,14 @@ def find_faces_by_group(bm, obcontext, name):
 
         return [f for f in bm.faces if len(f.verts)==len([v for v in f.verts if v.index in group_verts])]    
 
-def export_face(obcontext, f, loop_vert, inner_faces, track_faces):
+def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
     fs = ""
     # default values
     is_dual_sided = False
     color = 0x11
-    len_verts = len(f.loops)
-    if len_verts>4:
-        raise Exception('Face has too many vertices: {}'.format(len_verts))
+    verts = [l.vert.index for l in f.loops]
+    if len(verts)>4:
+        raise Exception('Face has too many vertices: {}'.format(len(verts)))
     if len(obcontext.material_slots)>0:
         slot = obcontext.material_slots[f.material_index]
         mat = slot.material
@@ -131,31 +131,60 @@ def export_face(obcontext, f, loop_vert, inner_faces, track_faces):
         genesis_color = mat.name.split('_')[0]
         color = genesis_to_p8_colors[genesis_color[0]]*16 + genesis_to_p8_colors[genesis_color[1]]
 
+    # find collision edges
+    borders = []
+    if vgroups is not None and f in ground_faces:
+        for l in f.loops:
+            e = l.edge
+            e0 = e.verts[0]
+            e1 = e.verts[1]
+            # get vertex groups
+            if e0.index in vgroups and e1.index in vgroups:
+                g0 = vgroups[e0.index]
+                g1 = vgroups[e1.index]
+                # are edges part of the same group
+                cg = set(g0).intersection(g1)
+                if len(cg)>1:
+                    raise Exception('Multiple vertex groups for the same edge ({},{}): {} x {} -> {}'.format(e0.co,e1.co,g0,g1,cg))
+                if len(cg)==1:
+                    vi = verts.index(e0.index)
+                    borders.append(vi)
+    if len(borders)>2:
+        raise Exception('Face: {} has too many collision borders: {}/2'.format(f.index, len(borders)))
+    
     has_inner_faces = inner_faces is not None and len(inner_faces)>0
     # face flags bit layout:
-    # ground face:   16
-    # inner faces:  8
-    # track:        4 (todo)
-    # tri/quad:     2
-    # dual-side:    1
+    # 5-7: borders count
+    # 4: ground face
+    # 3: inner faces
+    # 2: track/dirt
+    # 1: tri/quad
+    # 0: dual-side
     fs += "{:02x}".format(
-        (16 if track_faces is not None and f in track_faces else 0) + 
+        (len(borders)<<5) +
+        (16 if ground_faces is not None and f in ground_faces else 0) + 
         (8 if has_inner_faces else 0) + 
-        (2 if len_verts==4 else 0) + 
+        (2 if len(verts)==4 else 0) + 
         (1 if is_dual_sided else 0))
     # color
     fs += "{:02x}".format(color)
 
     # + vertex id (= edge loop)
-    for l in f.loops:
-        vi = loop_vert[l.index]+1
-        fs += pack_variant(vi)
+    for vi in verts:        
+        fs += pack_variant(vi+1)
 
     # inner faces?
     if has_inner_faces:
         fs += pack_variant(len(inner_faces))
         for inner_face in inner_faces:
-            fs += export_face(obcontext, inner_face, loop_vert, None, None)
+            fs += export_face(obcontext, inner_face, None, None, None)
+
+    # border indices?
+    if len(borders)>0:
+        fs += "{:02x}".format(
+           borders[0] +
+           (borders[1]<<4 if len(borders)>1 else 0)
+        )
 
     return fs
 
@@ -168,11 +197,17 @@ def export_object(obcontext):
 
     # create vertex group lookup dictionary for names
     vgroup_names = {vgroup.index: vgroup.name for vgroup in obcontext.vertex_groups}
+    ground_group_index = obcontext.vertex_groups['GROUND_FACE'].index
     # create dictionary of vertex group assignments per vertex
-    vgroups = {v.index: [vgroup_names[g.group] for g in v.groups] for v in obdata.vertices}
 
-    # create a map loop index -> vertex index (see: https://www.python.org/dev/peps/pep-0274/)
-    loop_vert = {l.index:l.vertex_index for l in obdata.loops}
+    # find ground faces
+    ground_faces=find_faces_by_group(bm, obcontext, 'GROUND_FACE')
+    
+    # all ground vertices
+    ground_vertices = [obdata.vertices[v.index] for face in ground_faces for v in face.verts]
+
+    # all border vertices
+    vgroups = {v.index: [vgroup_names[g.group] for g in v.groups if vgroup_names[g.group] in ["BORDER1","BORDER2","BORDER3"]] for v in ground_vertices}
 
     # vertices
     lens = pack_variant(len(obdata.vertices))
@@ -184,9 +219,6 @@ def export_object(obcontext):
 
     # find detail faces
     detail_faces=find_faces_by_group(bm, obcontext, 'DETAIL_FACE')
-
-    # find solid faces
-    track_faces=find_faces_by_group(bm, obcontext, 'TRACK_FACE')
 
     # all other faces
     other_faces = [f for f in bm.faces if f.index not in [f.index for f in detail_faces]]
@@ -232,7 +264,7 @@ def export_object(obcontext):
         inner_faces = inner_per_face.get(f.index)
         if inner_faces and len(inner_faces)>127:
             raise Exception('Face: {} too many inner faces: {}'.format(f.index,len(inner_faces)))
-        face_data = export_face(obcontext, f, loop_vert, inner_faces, track_faces)
+        face_data = export_face(obcontext, f, vgroups, inner_faces, ground_faces)
         faces.append({'face': f, 'data': face_data, 'bbox': verts_to_bbox2d(f.verts)})
 
     # push face data to buffer (inc. dual sided faces)
