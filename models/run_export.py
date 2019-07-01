@@ -19,7 +19,7 @@ def call(args):
 s = ""
 
 # 3d models
-file_list = ['cube']
+file_list = ['car_genesis']
 s = s + "{:02x}".format(len(file_list))
 for blend_file in file_list:
     print("Exporting: {}.blend".format(blend_file))
@@ -41,16 +41,29 @@ for blend_file in file_list:
 if len(s)>=2*8192:
     raise Exception('Data string too long ({})'.format(len(s)))
 
-tmp=s[:8192]
-print("__gfx__")
-# swap bytes
-gfx_data = ""
-for i in range(0,len(tmp),2):
-    gfx_data = gfx_data + tmp[i+1:i+2] + tmp[i:i+1]
-print(re.sub("(.{128})", "\\1\n", gfx_data, 0, re.DOTALL))
+def to_cart(s):
+    cart="""\
+pico-8 cartridge // http://www.pico-8.com
+version 16
+__lua__
+-- 3d model cart for virtua racing on pico
+"""
+    tmp=s[:2*0x2000]
+    # swap bytes
+    gfx_data = ""
+    for i in range(0,len(tmp),2):
+        gfx_data = gfx_data + tmp[i+1:i+2] + tmp[i:i+1]
+    cart += "__gfx__\n"
+    cart += re.sub("(.{128})", "\\1\n", gfx_data, 0, re.DOTALL)
 
-map_data=s[8192:]
-if len(map_data)>0:
-    print("__map__")
-    print(re.sub("(.{256})", "\\1\n", map_data, 0, re.DOTALL))
+    map_data=s[2*0x2000:2*0x3000]
+    if len(map_data)>0:
+        cart += "__map__\n"
+        cart += re.sub("(.{256})", "\\1\n", map_data, 0, re.DOTALL)
 
+    cart_path = os.path.join(local_dir, "..", "carts", "track_models.p8")
+    f = open(cart_path, "w")
+    f.write(cart)
+    f.close()
+
+to_cart(s)
