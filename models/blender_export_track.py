@@ -180,7 +180,6 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
 
     # border indices?
     if len(borders)>0:
-        print("{} -> {}", verts, borders)
         fs += "{:02x}".format(
            borders[0] +
            (borders[1]<<4 if len(borders)>1 else 0)
@@ -214,8 +213,6 @@ def export_object(obcontext):
     s += lens
     for v in obdata.vertices:
         s += "{}{}{}".format(pack_double(v.co.x), pack_double(v.co.z), pack_double(v.co.y))
-        if v.index==1850:
-            print(v.co)
 
     # find detail faces
     detail_faces=find_faces_by_group(bm, obcontext, 'DETAIL_FACE')

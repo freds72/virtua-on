@@ -2,6 +2,10 @@ pico-8 cartridge // http://www.pico-8.com
 version 18
 __lua__
 -- vector & tools
+function lerp(a,b,t)
+	return a*(1-t)+b*t
+end
+
 function make_v(a,b)
 	return {
 		b[1]-a[1],
@@ -35,7 +39,13 @@ function v_normz(v)
 	end
 	return d
 end
-
+function v_lerp(a,b,t)
+	return {
+		lerp(a[1],b[1],t),
+		lerp(a[2],b[2],t),
+		lerp(a[3],b[3],t)
+	}
+end
 
 local v_up={0,1,0}
 
@@ -287,8 +297,22 @@ function make_plyr(p,angle)
 
 			-- update orientation matrix
 			local m=make_m_from_euler(0,angle,0)
+			-- backup current position
+			local p0=v_clone(pos)
 			v_add(pos,m_fwd(m),velocity/4)
 			v_add(pos,v_up,-0.4)
+
+			local f1=find_face(pos,oldf)
+			-- invalid move?
+			if not f1 then
+				-- split until valid
+				for i=4,1,-1 do
+					local p2=v_lerp(p0,pos,i/4)
+					f1=find_face(p2,oldf)
+					if(f1) pos=p2 break
+				end
+			end
+
 			-- find ground
 			local newf,newpos=find_face(pos,oldf)
 			if newf then		
