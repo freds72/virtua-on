@@ -79,6 +79,7 @@ def diffuse_to_p8color(rgb):
         raise Exception('Unknown color: 0x{}'.format(h))
 
 genesis_to_p8_colors = {
+    "0": 0, # black
     "1": 4, # dark brown
     "2": 7, # white
     "3": 8, # red
@@ -132,7 +133,7 @@ def export_face(obcontext, f, loop_vert, inner_faces, track_faces):
 
     has_inner_faces = inner_faces is not None and len(inner_faces)>0
     # face flags bit layout:
-    # track face:   16
+    # ground face:   16
     # inner faces:  8
     # track:        4 (todo)
     # tri/quad:     2
