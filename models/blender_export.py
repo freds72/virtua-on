@@ -74,9 +74,9 @@ def export_layer(scale,l):
         obdata = obcontext.data
         bm = bmesh.new()
         bm.from_mesh(obdata)
-
-        # create a map loop index -> vertex index (see: https://www.python.org/dev/peps/pep-0274/)
-        loop_vert = {l.index:l.vertex_index for l in obdata.loops}
+        bm.verts.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        bm.normal_update()
 
         vlen = len(obdata.vertices)
         # vertices
@@ -86,7 +86,8 @@ def export_layer(scale,l):
 
         # faces
         faces = []
-        for f in bm.faces:
+        for i in range(len(bm.faces)):
+            f = bm.faces[i]
             fs = ""
             color = 0x11
             is_dual_sided = False     
@@ -102,27 +103,26 @@ def export_layer(scale,l):
                 color = int.from_bytes(bytes.fromhex(mat.name.split('_')[0]),'big')
 
             # face flags bit layout:
-            # tri/quad:  2
-            # dual-side: 1
+            # 1: tri/quad
+            # 0: dual-side
             fs += "{:02x}".format(
                 (2 if len_verts==4 else 0) + 
                 (1 if is_dual_sided else 0))
             # color
             fs += "{:02x}".format(color)
 
-            # + vertex id (= edge loop)
+            # + vertex id
             for l in f.loops:
-                vi = loop_vert[l.index]+1
-                fs += "{:02x}".format(vi)
-            faces.append({'face': f, 'data': fs})
+                fs += "{:02x}".format(l.vert.index+1)
+            faces.append({'face': i, 'data': fs})
 
         # push face data to buffer (inc. dual sided faces)
         s += "{:02x}".format(len(faces))
         for f in faces:
             s += f['data']
-            f = faces[i]['face']
+            raw_face = bm.faces[f['face']]
             # normal
-            s += "{}{}{}".format(pack_double(f.normal.x), pack_double(f.normal.z), pack_double(f.normal.y))
+            s += "{}{}{}".format(pack_double(raw_face.normal.x), pack_double(raw_face.normal.z), pack_double(raw_face.normal.y))
                                 
     return s
 
