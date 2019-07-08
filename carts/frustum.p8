@@ -438,7 +438,7 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
-					out[n]={key=1/(y*y+z*z),f=face,v=verts,clipped=is_clipped>0 or nil,dist=dist}
+					out[n]={key=1/(y*y+z*z),f=face,v=verts,dist=dist}
 				 	-- 0.1% faster vs [#out+1]
 				 	n+=1
 				end
@@ -473,19 +473,25 @@ end
 
 function draw_polys(polys,v_cache)
 	-- all poly are encoded with 2 colors
- fillp(0xa5a5)	
+ 	fillp(0xa5a5)	
 	for i=1,#polys do
 		local d=polys[i]
 		cam:project_poly(d.v,d.f.c)
 		-- details?
 		if d.f.inner and d.dist<2 then					
 			for _,face in pairs(d.f.inner) do
-				local verts={}
+				local verts,outcode,is_clipped={},0xffff,0
 				for ki,vi in pairs(face.vi) do
-					verts[ki]=v_cache(vi)
+					local a=v_cache(vi)
+					outcode=band(outcode,a.outcode)
+					-- behind near plane?
+					is_clipped+=band(a.outcode,2)
+					verts[ki]=a
 				end
-				if(d.clipped) verts=z_poly_clip(z_near,verts)
-				if(#verts>2) cam:project_poly(verts,face.c)
+				if outcode==0 then
+					if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+					if(#verts>2) cam:project_poly(verts,face.c)
+				end
 			end
 		end
 	end
