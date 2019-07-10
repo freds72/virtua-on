@@ -251,7 +251,7 @@ function make_cam()
 					mapdy=1
 					disty=(mapy+1-y)*ddy
 				end	
-				for dist=0,1 do
+				for dist=0,2 do
 					if distx<disty then
 						distx+=ddx
 						mapx+=mapdx
@@ -345,16 +345,16 @@ local dither_pat={0xffff,0x7fff,0x7fdf,0x5fdf,0x5f5f,0x5b5f,0x5b5e,0x5a5e,0x5a5a
 
 
 function is_inside(p,f)
-	local v,vi=track.v,f.vi
-	local inside,p0=0,track.v[vi[#vi]]
-	for i=1,#vi do
-		local p1=v[vi[i]]
-		if((p0[3]-p1[3])*(p[1]-p0[1])+(p1[1]-p0[1])*(p[3]-p0[3])>0) inside+=1
+	local v=track.v
+	local inside,p0=0,v[f[f.ni]]
+	for i=1,f.ni do
+		local p1=v[f[i]]
+		if((p0[3]-p1[3])*(p[1]-p0[1])+(p1[1]-p0[1])*(p[3]-p0[3])>=0) inside+=1
 		p0=p1
 	end
-	if inside==#vi then
+	if inside==f.ni then
 		-- intersection point
-		local t=-v_dot(make_v(v[vi[1]],p),f.n)/f.n[2]
+		local t=-v_dot(make_v(v[f[1]],p),f.n)/f.n[2]
 		p=v_clone(p)
 		p[2]+=t
 		return f,p
@@ -421,8 +421,8 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
 			local z,y,outcode,verts,is_clipped=0,0,0xffff,{},0
 			-- project vertices
-			for ki,vi in pairs(face.vi) do
-				local a=v_cache(vi)
+			for ki=1,face.ni do
+				local a=v_cache(face[ki])
 				y+=a[2]
 				z+=a[3]
 				outcode=band(outcode,a.outcode)
@@ -478,11 +478,11 @@ function draw_polys(polys,v_cache)
 		local d=polys[i]
 		cam:project_poly(d.v,d.f.c)
 		-- details?
-		if d.f.inner and d.dist<2 then					
+		if d.f.inner and d.key>0.0200 then -- d.dist<2 then					
 			for _,face in pairs(d.f.inner) do
 				local verts,outcode,is_clipped={},0xffff,0
-				for ki,vi in pairs(face.vi) do
-					local a=v_cache(vi)
+				for ki=1,face.ni do
+					local a=v_cache(face[ki])
 					outcode=band(outcode,a.outcode)
 					-- behind near plane?
 					is_clipped+=band(a.outcode,2)
@@ -504,12 +504,11 @@ function _draw()
 	local pos,angle=plyr:get_pos()
 
 	-- background
- 	cls(3)
 	local x0=-(angle*128)%128
- 	map(0,0,x0,0,16,8)
+ 	map(0,0,x0,0)
  	if x0>0 then
  		x0-=128
-	 	map(0,0,x0,0,16,8)
+	 	map(0,0,x0,0)
  	end
 
 	local p,m={},cam.m
@@ -615,15 +614,17 @@ function _draw()
 	collect_model_faces(model,m,out)
  	sort(out)
 	draw_polys(out)
+
+	--[[
+	printb("lap time\n"..time_tostr(time_t),90,2,7,0)
+	printb("time",52,2,7,0)
+	printxl(tostr(flr(time())),64,9)	
+	]]
 	
 	local cpu=flr(1000*stat(1))/10
 	local mem=flr(100*stat(0))/10
 	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces--.."\n"..cam.pos[1].."/"..cam.pos[3]
 	printb(cpu,2,2,6,5)
-
- printb("lap time\n"..time_tostr(time_t),90,2,7,0)
-	printb("time",52,2,7,0)
- printxl(tostr(flr(time())),64,9)	
 end
 
 -->8
@@ -690,6 +691,18 @@ function unpack_string()
 	return s
 end
 
+function unpack_face()
+	local f={flags=unpack_int(),c=unpack_int()}
+	f.ni=band(f.flags,2)>0 and 4 or 3
+	-- vertex indices
+	-- quad?
+	for i=1,f.ni do
+		-- using the face itself saves more than 500KB!
+		f[i]=unpack_variant()
+	end
+	return f
+end
+
 function unpack_model(model,scale)
 	-- vertices
 	unpack_array(function()
@@ -699,25 +712,12 @@ function unpack_model(model,scale)
 
 	-- faces
 	unpack_array(function()
-		local f={vi={},flags=unpack_int(),c=unpack_int()}
-		-- vertex indices
-		-- quad?
-		local n=band(f.flags,2)>0 and 4 or 3
-		for i=1,n do
-			add(f.vi,unpack_variant())
-		end
+		local f=unpack_face()
 		-- inner faces?
 		if band(f.flags,8)>0 then
 			f.inner={}
 			unpack_array(function()
-				local df={vi={},flags=unpack_int(),c=unpack_int()}
-				-- vertex indices
-				-- quad?
-				local n=band(df.flags,2)>0 and 4 or 3
-				for i=1,n do
-					add(df.vi,unpack_variant())
-				end
-				add(f.inner,df)
+				add(f.inner,unpack_face())
 			end)
 		end
 		-- collision planes?
@@ -728,9 +728,9 @@ function unpack_model(model,scale)
 			for i=0,borders-1 do
 				-- vertex index
 				local v0=band(shr(bi,i*4),0xf)
-				local v1=(v0+1)%#f.vi
+				local v1=(v0+1)%#f.ni
 				-- get border vectors
-				v0,v1=model.v[f.vi[v0+1]],model.v[f.vi[v1+1]]
+				v0,v1=model.v[f[v0+1]],model.v[f[v1+1]]
 				-- make a 2d plane vector
 				local bn=make_v(v1,v0)
 				bn[2]=0
@@ -741,7 +741,7 @@ function unpack_model(model,scale)
 		-- normal
 		f.n={unpack_double(),unpack_double(),unpack_double()}
 		-- viz check
-		f.cp=v_dot(f.n,model.v[f.vi[1]])
+		f.cp=v_dot(f.n,model.v[f[1]])
 
 		add(model.f,f)
 	end)
