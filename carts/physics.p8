@@ -148,7 +148,7 @@ end
 local cam=make_cam(5)
 
 function make_plyr(p,a,density)
-	local angle,angularv,rpm,max_rpm=a,0,0,96
+	local steering_angle,angle,angularv,rpm,max_rpm=0,a,0,0,96
 	local velocity={0,0,0}
 	local forces,torque={0,0,0},0
 
@@ -187,54 +187,19 @@ function make_plyr(p,a,density)
 		-- application point (world space)
 		local pos,slide=v_clone(self.pos),false
 		v_add(pos,m_fwd(self.m),offset)
-
+		
 		-- point velocity
 		local relv=self:pt_velocity(pos)
 		local relv_len=v_dot(relv,relv)
-		-- slip angle
-		local sa,sa_ratio=0,1
-		if true then --relv_len>k_small then
-			--
-			sa=-v_dot(right,relv)
-			
- 		-- make sure to keep velocity
- 		-- to compute adjust ratio
- 		local t=abs(sa)/12
-			-- plyr.slip_angles[sensor]=t
-			--sa_ratio*=t
-		end	
-		
-		-- long. slip
-		relv_len=v_dot(fwd,relv)
-		-- convert rpm to rps
-		local sr=(rpm and 0.3*rpm or relv_len)-relv_len
-		if abs(relv_len)>k_small then
-			sr/=abs(relv_len)
-		end
-		local sr_ratio=sa_ratio*abs(sr)
-		-- todo: include speed
-		if sr_ratio<0.75 then
-			slide=true
-		end
-		-- todo: include terrain quality
-		-- plyr.slip_ratio[sensor]=abs(sr)
-				
-		-- adjust long
-		-- 12: 4wd
-		-- 24: 2wd
-		--sr*=24*sr_ratio
-
-		-- limit overall enveloppe
-		--sa*=6*sr_ratio
-		
-		-- impulse factors
-		if abs(sa)>0 then
+		-- avoid noise
+		if relv_len>0.1 then
+			local sa=v_dot(relv,right)
 			v_scale(right,sa)
 			self:apply_impulse(right,pos)
 		end
-		
-		if abs(sr)>0 then
-			v_scale(fwd,sr)
+
+		if rpm then
+			v_scale(fwd,rpm)
 			self:apply_force(fwd,pos)
 		end
 	
@@ -290,16 +255,18 @@ function make_plyr(p,a,density)
    ]]
    
 			-- steering angle
-			local steering=1-0.5*angle
+			steering_angle+=da/8
+			local steering=1-0.05*steering_angle
 
 			-- front wheels
-			local c,s=cos(angle),sin(angle)
+			local c,s=cos(steering),sin(steering)
 			add_tireforce(self,1,{c,0,-s},{s,0,c},1)
 			-- rear wheels
 			add_tireforce(self,-1.2,v_right,v_fwd,1,rpm)
 			
 		end,
 		apply_force=function(self,f,p)
+			--[[
 			local x0,y0=cam:project(p)
 			circfill(x0,y0,2,12)
 			vf=v_clone(p)
@@ -307,7 +274,7 @@ function make_plyr(p,a,density)
 			local x1,y1=cam:project(vf)
 			line(x0,y0,x1,y1,12)
 			flip()
-
+			]]
 			v_add(forces,f)
 			torque+=v2_cross(make_v(self.pos,p),f)
 		end,
@@ -334,23 +301,24 @@ function make_plyr(p,a,density)
 			v_scale(velocity,0.92)
 		end,
 		integrate_v=function(self,dt)
-		 -- update pos & orientation
+		 	-- update pos & orientation
 			v_add(self.pos,velocity,dt)
 			angle+=dt*angularv			
 			self.m=make_m_from_euler(0,angle,0)
 
 			self:integrate_forces(dt)
+
+			steering_angle*=0.8
 		end,
 		reset=function(self)
 			forces,torque={0,0,0},0
 		end,	
 		update=function(self)
-			
 		end
 	}
 end
 
-local plyr=make_plyr({0,0,0},0,1)
+local plyr=make_plyr({0,0,0},0,0.5)
 
 function _update()
 	plyr:control()
