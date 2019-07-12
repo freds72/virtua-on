@@ -147,8 +147,44 @@ end
 
 local cam=make_cam(5)
 
+function make_skidmarks()
+	local t,skidmarks=0,{}
+	return {
+		add=function(self,pos)
+			if t==0 then
+			 t=20
+				if #skidmarks>=20 then
+				 for i=2,#skidmarks do
+				 	skidmarks[i-1]=skidmarks[i]
+				 end
+				 skidmarks[20]=nil
+				end
+				add(skidmarks,v_clone(pos))
+			end
+		end,
+		update=function(self)
+			t-=1			
+		end,
+		draw=function(self)
+			if(#skidmarks<2) return
+			local x0,y0=cam:project(skidmarks[1])
+			
+			for i=2,#skidmarks do
+				local x1,y1=cam:project(skidmarks[i])
+				line(x0,y0,x1,y1,5)
+				x0,y0=x1,y1
+			end
+		end
+	}
+end
+
+ 
 function make_plyr(p,a,density)
-	local steering_angle,angle,angularv,rpm,max_rpm=0,a,0,0,96
+	local steering_angle,angle,angularv,rpm,max_rpm=0,a,0,0,96	
+	local skidmarks={
+		make_skidmarks(),
+		make_skidmarks()
+	}
 	local velocity={0,0,0}
 	local forces,torque={0,0,0},0
 
@@ -179,11 +215,7 @@ function make_plyr(p,a,density)
 	i*=density
 	local inv_i=1/i
 
-	local add_tireforce=function(self,offset,right,fwd,brake,rpm)
-		-- force to world
-		right=m_x_v(self.m,right)
-		fwd=m_x_v(self.m,fwd)
-		
+	local add_tireforce=function(self,offset,right,fwd,brake,id,rpm)		
 		-- application point (world space)
 		local pos,slide=v_clone(self.pos),false
 		v_add(pos,m_fwd(self.m),offset)
@@ -192,19 +224,28 @@ function make_plyr(p,a,density)
 		local relv=self:pt_velocity(pos)
 		local relv_len=v_dot(relv,relv)
 		-- avoid noise
-		if relv_len>0.1 then
+		if relv_len>0.01 then
 			local sa=v_dot(relv,right)
 			v_scale(right,sa)
-			self:apply_impulse(right,pos)
+			-- slide
+			if abs(sa)>3 then
+				slide=true
+			end
+			self:apply_impulse(right,pos)			
 		end
 
 		if rpm then
-			v_scale(fwd,rpm)
+ 		-- slide?
+ 		if v_dot(relv,fwd)<0.8 then
+ 			slide=true
+ 		end
+			v_scale(fwd,10*rpm)
 			self:apply_force(fwd,pos)
 		end
 	
-		if slide then
-		--
+		if slide==true then
+		 --
+			skidmarks[id]:add(pos)
 		end
 	end
 	return {
@@ -212,8 +253,8 @@ function make_plyr(p,a,density)
 		m=make_m_from_euler(0,a,0),
 		-- obj to world space
 		apply=function(self,p)
-				p=m_x_v(self.m,p)
-			 v_add(p,self.pos)
+			p=m_x_v(self.m,p)
+			v_add(p,self.pos)
 			return p
 		end,
 		pt_velocity=function(self,p)
@@ -221,8 +262,21 @@ function make_plyr(p,a,density)
 			v_add(relv,v2_ortho(make_v(self.pos,p),angularv))
 			v_scale(relv,-1)
 		 return relv
-		end,		
+		end,	
+		draw_vector=function(self,f,p,c)
+			local x0,y0=cam:project(p)
+			p=v_clone(p)
+			v_add(p,f)
+			local x1,y1=cam:project(p)
+			line(x0,y0,x1,y1,c)
+			flip()
+		end,	
 		draw=function(self)	
+			for _,s in pairs(skidmarks) do
+				s:draw()
+			end
+
+			
 			local v0=v[#v]
 			local x0,y0=cam:project(self:apply(v0))
 			for i=1,#v do
@@ -256,13 +310,14 @@ function make_plyr(p,a,density)
    
 			-- steering angle
 			steering_angle+=da/8
-			local steering=1-0.05*steering_angle
+			local steering=1-0.1*steering_angle
 
 			-- front wheels
 			local c,s=cos(steering),sin(steering)
-			add_tireforce(self,1,{c,0,-s},{s,0,c},1)
+			self:draw_vector(m_x_v(self.m,{s,0,c}),self.pos,9)
+			add_tireforce(self,1,m_x_v(self.m,{c,0,-s}),m_x_v(self.m,{s,0,c}),1,1)
 			-- rear wheels
-			add_tireforce(self,-1.2,v_right,v_fwd,1,rpm)
+			add_tireforce(self,-1.2,m_right(self.m),m_fwd(self.m),1,2,rpm)
 			
 		end,
 		apply_force=function(self,f,p)
@@ -279,17 +334,9 @@ function make_plyr(p,a,density)
 			torque+=v2_cross(make_v(self.pos,p),f)
 		end,
 		apply_impulse=function(self,f,p)
-			local x0,y0=cam:project(p)
-			circfill(x0,y0,2,8)
-			vf=v_clone(p)
-			v_add(vf,f)
-			local x1,y1=cam:project(vf)
-			line(x0,y0,x1,y1,8)
-			flip()
-
 			v_add(velocity,f,inv_mass)
-			angularv+=mid(inv_i*v2_cross(make_v(self.pos,p),f),-1,1)
-			
+			angularv+=inv_i*v2_cross(make_v(self.pos,p),f)
+			angularv=mid(angularv,-1,1)
 		end,
 		integrate_forces=function(self,dt)
 			v_add(velocity,forces,inv_mass*dt*0.5)
@@ -314,11 +361,14 @@ function make_plyr(p,a,density)
 			forces,torque={0,0,0},0
 		end,	
 		update=function(self)
+			for _,s in pairs(skidmarks) do
+				s:update()
+			end
 		end
 	}
 end
 
-local plyr=make_plyr({0,0,0},0,0.5)
+local plyr=make_plyr({0,0,0},0,2)
 
 function _update()
 	plyr:control()
@@ -328,11 +378,14 @@ function _update()
 
 	plyr:integrate_v(1/30)
 	plyr:reset()
+	
+	plyr:update()
 end
 
 function _draw()
 	cls()
 	plyr:draw()	
 	
-	print(stat(1),2,118,2)
+	local cpu=flr(1000*stat(1))/10
+	print(cpu.."%",2,118,2)
 end

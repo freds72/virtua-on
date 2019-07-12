@@ -626,14 +626,21 @@ end
 -->8
 -- unpack data & models
 local cart_id,mem=1
+local cart_msg="    virtua racing - boot\n"
 function mpeek()
 	if mem==0x4300 then
-		printh("switching cart: "..cart_id)
+		cart_msg=cart_msg.."\n"
 		reload(0,0,0x4300,"track_"..cart_id..".p8")
 		cart_id += 1
 		mem=0
 	end
 	local v=peek(mem)
+	if mem%779==0 then
+		cart_msg=cart_msg.."█"
+		?cart_msg,0,9,1
+		?cart_msg,0,8,7
+		flip()
+	end
 	mem+=1
 	return v
 end
@@ -792,6 +799,8 @@ function unpack_track()
 	all_models[name]=model
 end
 
+-- clear screen
+cls()
 -- first track data cart
 reload(0,0,0x4300,"track_0.p8")
 unpack_track()
