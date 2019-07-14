@@ -209,10 +209,9 @@ function make_cam()
    			-- height
 			angle=a
 			-- inverse view matrix
-			m=make_m_from_euler(0.2,a,0)
-			v_add(pos,m_fwd(m),-0.5)
-			v_add(pos,m_right(m),cos(time()/4)/4)
-		   	m_inv(m)
+			m=make_m_from_euler(0.06,a,0)
+			v_add(pos,m_fwd(m),-0.8)
+			m_inv(m)
 		   	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
 			self.pos,self.m=pos,m
 		end,
@@ -284,7 +283,7 @@ function make_plyr(p,angle)
 	return {
 		get_pos=function()
 	 		return pos,angle,m_from_q(make_q(oldf and oldf.n or v_up,angle))
-		 end,
+		end,
 		handle_input=function()
 			local dx,dy=0,0
 			if(btn(2)) dx=1
@@ -296,11 +295,13 @@ function make_plyr(p,angle)
 			-- if(oldf) dx/=8
 			velocity+=0.33*dx
 		end,
-		update=function()
+		update=function(self)
   			vangle*=0.8
-  			velocity*=0.8
+  			velocity*=0.9
+			angle*=0.8
 
 			angle+=vangle/512
+			angle=mid(angle,-0.08,0.08)
 
 			-- update orientation matrix
 			local m=make_m_from_euler(0,angle,0)
@@ -335,6 +336,13 @@ function make_plyr(p,angle)
 					v_add(pos,force)
 				end
 			end
+
+			-- update parts orientations
+			local rpm=-velocity*time()
+			self.rw=make_m_from_euler(rpm,0,0)
+			local wheel_m=make_m_from_euler(rpm,angle,0)
+			self.lfw=wheel_m
+			self.rfw=wheel_m
 		end
 	}
 end
@@ -452,7 +460,7 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 	end
 end
 
-function collect_model_faces(model,m,out)
+function collect_model_faces(model,m,parts,out)
 	-- cam pos in object space
 	local p,cm={},cam.m
 	-- vertex group matrix
@@ -487,8 +495,8 @@ function collect_model_faces(model,m,out)
 		local pos=v_clone(vgroup.offset)
 		m_x_v(m_orig,pos)		
 		m_set_pos(m,pos)
-		-- todo: get local vertex group orientation
-		vgm=make_m_from_euler(time(),0,0)
+		
+		vgm=parts[name]
 
 		-- cam to vgroup space
 		local x,y,z=cam_pos[1]-vgroup.offset[1],cam_pos[2]-vgroup.offset[2],cam_pos[3]-vgroup.offset[3]
@@ -636,9 +644,9 @@ function _draw()
 	-- m=make_m_from_euler(0,time()/16,0)
 	m_set_pos(m,pos)
 	-- car
-	local model=all_models["car"].lods[1]
+	local model=all_models["car"].lods[2]
 	total_faces=#model.f
-	collect_model_faces(model,m,out)
+	collect_model_faces(model,m,plyr,out)
  	sort(out)
 	draw_polys(out)
 

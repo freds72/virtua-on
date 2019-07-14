@@ -137,7 +137,7 @@ def export_layer(scale,l):
         vgroup_faces = defaultdict(list)
         for f in bm.faces:
             fs = ""
-            color = 0x11
+            color = "11" # hex 0x11
             is_dual_sided = False     
             len_verts = len(f.verts)
             if len_verts>4:
@@ -148,7 +148,7 @@ def export_layer(scale,l):
                 mat = slot.material
                 is_dual_sided = mat.game_settings.use_backface_culling==False
                 # colors are encoded as hex figures in Blender!
-                color = int.from_bytes(bytes.fromhex(mat.name.split('_')[0]),'big')
+                color = mat.name.split('_')[0]
 
             # face flags bit layout:
             # 1: tri/quad
@@ -157,7 +157,7 @@ def export_layer(scale,l):
                 (2 if len_verts==4 else 0) + 
                 (1 if is_dual_sided else 0))
             # color
-            fs += "{:02x}".format(color)
+            fs += color
 
             # + vertex id
             vgroup_name = None
