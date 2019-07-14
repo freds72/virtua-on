@@ -235,10 +235,10 @@ function make_plyr(p,a,density)
 		end
 
 		if rpm then
- 		-- slide?
- 		if v_dot(relv,fwd)<0.8 then
- 			slide=true
- 		end
+			-- slide?
+			if v_dot(relv,fwd)<0.8 then
+				slide=true
+			end
 			v_scale(fwd,10*rpm)
 			self:apply_force(fwd,pos)
 		end
@@ -345,7 +345,7 @@ function make_plyr(p,a,density)
 			angularv*=0.92
 			rpm*=0.97
 			-- some friction
-			v_scale(velocity,0.92)
+			v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
 		end,
 		integrate_v=function(self,dt)
 		 	-- update pos & orientation

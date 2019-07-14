@@ -91,7 +91,13 @@ function m_x_v(m,v)
 	local x,y,z=v[1],v[2],v[3]
 	v[1],v[2],v[3]=m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]
 end
-
+function m_clone(m)
+	local c={}
+	for k,v in pairs(m) do
+		c[k]=v
+	end
+	return c
+end
 function make_m_from_euler(x,y,z)
 		local a,b = cos(x),-sin(x)
 		local c,d = cos(y),-sin(y)
@@ -201,11 +207,11 @@ function make_cam()
 		track=function(self,pos,a,m)
    			pos=v_clone(pos)
    			-- height
-			v_add(pos,m_fwd(m),-0.8)
-   			pos[2]+=0.2
 			angle=a
 			-- inverse view matrix
-			m=make_m_from_euler(0,a,0)
+			m=make_m_from_euler(0.2,a,0)
+			v_add(pos,m_fwd(m),-0.5)
+			v_add(pos,m_right(m),cos(time()/4)/4)
 		   	m_inv(m)
 		   	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
 			self.pos,self.m=pos,m
@@ -449,6 +455,8 @@ end
 function collect_model_faces(model,m,out)
 	-- cam pos in object space
 	local p,cm={},cam.m
+	-- vertex group matrix
+	local vgm
 	local cx,cy,cz=cm[13],cm[14],cm[15]
 	local x,y,z=-cx-m[13],-cy-m[14],-cz-m[15]
 	local cam_pos={m[1]*x+m[2]*y+m[3]*z,m[5]*x+m[6]*y+m[7]*z,m[9]*x+m[10]*y+m[11]*z}
@@ -457,6 +465,10 @@ function collect_model_faces(model,m,out)
 		local a=p[k]
 		if not a then
 			a=v_clone(model.v[k])
+			-- relative to vgroup
+			if vgm then
+				m_x_v(vgm,a)
+			end
 			-- relative to world
 			m_x_v(m,a)
 			-- world to cam
@@ -466,7 +478,25 @@ function collect_model_faces(model,m,out)
 		end
 		return a
 	end
+	-- main model
 	collect_faces(model.f,cam_pos,v_cache,out)
+	-- sub models	
+	local m_orig=m_clone(m)
+
+	for name,vgroup in pairs(model.vgroups) do
+		-- get world group position
+		local pos=v_clone(vgroup.offset)
+		m_x_v(m_orig,pos)		
+		m_set_pos(m,pos)
+		-- todo: get local vertex group orientation
+		vgm=make_m_from_euler(time(),0,0)
+
+		-- cam to vgroup space
+		local x,y,z=x-vgroup.offset[1],y-vgroup.offset[2],z-vgroup.offset[3]
+		local cam_pos={vgm[1]*x+vgm[2]*y+vgm[3]*z,vgm[5]*x+vgm[6]*y+vgm[7]*z,vgm[9]*x+vgm[10]*y+vgm[11]*z}
+
+		collect_faces(vgroup.f,cam_pos,v_cache,out)
+	end
 end
 
 function draw_polys(polys,v_cache)
@@ -607,7 +637,7 @@ function _draw()
 	-- m=make_m_from_euler(0,time()/16,0)
 	m_set_pos(m,pos)
 	-- car
-	local model=all_models["car"].lods[2]
+	local model=all_models["car"].lods[1]
 	total_faces=#model.f
 	collect_model_faces(model,m,out)
  	sort(out)
@@ -764,8 +794,25 @@ function unpack_models()
   
 		-- level of details models
 		unpack_array(function()
-			local lod={v={},f={},n={},cp={}}
+			local lod={v={},f={},vgroups={}}
 			unpack_model(lod,scale)
+			-- unpack vertex groups (as sub model)
+			unpack_array(function()				
+				local name=unpack_string()
+				local vgroup={offset={unpack_double(scale),unpack_double(scale),unpack_double(scale)},f={}}
+				-- faces
+				unpack_array(function()
+					local f=unpack_face()
+					-- normal
+					f.n={unpack_double(),unpack_double(),unpack_double()}
+					-- viz check
+					f.cp=v_dot(f.n,lod.v[f[1]])
+
+					add(vgroup.f,f)
+				end)				
+				lod.vgroups[name]=vgroup
+			end)
+		
 			add(model.lods,lod)
 		end)
 
@@ -859,6 +906,7 @@ function trifill(x0,y0,x1,y1,x2,y2,col)
 	line(x0,y0)
 end
 ]]
+
 function z_poly_clip(znear,v)
 	local res={}
 	local v0,v1,d1,t,r=v[#v]

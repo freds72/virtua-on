@@ -4,6 +4,7 @@ import argparse
 import sys
 import math
 from mathutils import Vector, Matrix
+from collections import defaultdict
 
 argv = sys.argv
 if "--" not in argv:
@@ -25,6 +26,13 @@ charset="_0123456789abcdefghijklmnopqrstuvwxyz"
 
 def tohex(val, nbits):
     return (hex((int(round(val,0)) + (1<<nbits)) % (1<<nbits))[2:]).zfill(nbits>>2)
+
+def pack_string(name):
+    name = name.lower()
+    s = "{:02x}".format(len(name))
+    for c in name:
+        s += "{:02x}".format(charset.index(c)+1)
+    return s
 
 # variable length packing (1 or 2 bytes)
 def pack_variant(x):
@@ -65,6 +73,14 @@ def diffuse_to_p8color(rgb):
         # unknown color
         raise Exception('Unknown color: 0x{}'.format(h))
 
+def find_faces_by_group(bm, obcontext, name):
+    if name in obcontext.vertex_groups:
+        obdata = obcontext.data
+        group_idx = obcontext.vertex_groups[name].index
+        group_verts = [v.index for v in obdata.vertices if group_idx in [ vg.group for vg in v.groups ] ]
+
+        return [f for f in bm.faces if len(f.verts)==len([v for v in f.verts if v.index in group_verts])]   
+
 def export_layer(scale,l):
     # data
     s = ""
@@ -78,16 +94,48 @@ def export_layer(scale,l):
         bm.faces.ensure_lookup_table()
         bm.normal_update()
 
+        # vertex groups
+        vgroup_names = {vgroup.index: vgroup.name for vgroup in obcontext.vertex_groups}
+        # group id -> set(vertex.index)
+        vgroups = defaultdict(set)
+        for v in obdata.vertices:
+            if len(v.groups)>1:
+                raise Exception('Vertex: {} shared by more than 1 ({}) vertex group.'.format(v.index, len(v.groups)))
+            if len(v.groups)==1:
+                vgroups[v.groups[0].group].add(v.index)
+        
+        # vgroup centers
+        # vertex id -> cg
+        vgroup_cgs = {}
+        # group index -> cg
+        vgroup_cgs_by_name = {}
+        for k,v in vgroups.items():
+            # group position
+            cg = Vector((0,0,0))
+            for p in [obdata.vertices[vi] for vi in v]:
+                cg += p.co
+            cg /= len(v)
+            for vi in v:
+                vgroup_cgs[vi] = cg
+            vgroup_cgs_by_name[vgroup_names[k]] = cg
+        
+        # vertex index -> group 
+        vgroups = { v.index: vgroup_names[v.groups[0].group] for v in obdata.vertices if len(v.groups)>0 }
+
         vlen = len(obdata.vertices)
         # vertices
         s += pack_variant(vlen)
         for v in obdata.vertices:
-            s += "{}{}{}".format(pack_double(v.co.x), pack_double(v.co.z), pack_double(v.co.y))
+            pos = v.co.copy()
+            # offset vertex groups
+            if v.index in vgroup_cgs:
+                pos -= vgroup_cgs[v.index]
+            s += "{}{}{}".format(pack_double(pos.x), pack_double(pos.z), pack_double(pos.y))
 
         # faces
         faces = []
-        for i in range(len(bm.faces)):
-            f = bm.faces[i]
+        vgroup_faces = defaultdict(list)
+        for f in bm.faces:
             fs = ""
             color = 0x11
             is_dual_sided = False     
@@ -112,18 +160,43 @@ def export_layer(scale,l):
             fs += "{:02x}".format(color)
 
             # + vertex id
+            vgroup_name = None
             for l in f.loops:
-                fs += "{:02x}".format(l.vert.index+1)
-            faces.append({'face': i, 'data': fs})
+                vi = l.vert.index
+                fs += "{:02x}".format(vi+1)
+                # if v belongs to group -> move face to vertex group
+                v = obdata.vertices[vi]
+                if len(v.groups)>=1:
+                    vgroup_name = vgroup_names[v.groups[0].group]
+            face_data = {'index': f.index, 'data': fs}
+            
+            if vgroup_name is None:
+                faces.append(face_data)
+            else:
+                vgroup_faces[vgroup_name].append(face_data)
 
         # push face data to buffer (inc. dual sided faces)
         s += "{:02x}".format(len(faces))
         for f in faces:
             s += f['data']
-            raw_face = bm.faces[f['face']]
+            raw_face = bm.faces[f['index']]
             # normal
             s += "{}{}{}".format(pack_double(raw_face.normal.x), pack_double(raw_face.normal.z), pack_double(raw_face.normal.y))
-                                
+                
+        s += pack_variant(len(vgroup_faces.keys()))
+        for k,faces in vgroup_faces.items():
+            # group name
+            s += pack_string(k)
+            # group position
+            cg = vgroup_cgs_by_name[k]
+            s += "{}{}{}".format(pack_double(cg.x), pack_double(cg.z), pack_double(cg.y))
+            # number of index
+            s += pack_variant(len(faces))
+            for f in faces:
+                s += f['data']
+                raw_face = bm.faces[f['index']]
+                # normal
+                s += "{}{}{}".format(pack_double(raw_face.normal.x), pack_double(raw_face.normal.z), pack_double(raw_face.normal.y))
     return s
 
 # model data
@@ -133,10 +206,8 @@ s = ""
 obcontext = [o for o in scene.objects if o.type == 'MESH' and o.layers[0]][0]
 
 # object name
-name = obcontext.name.lower()
-s += "{:02x}".format(len(name))
-for c in name:
-    s += "{:02x}".format(charset.index(c)+1)
+name = obcontext.name
+s += pack_string(name)
 
 # scale (custom scene property)
 model_scale = scene.get("scale", 1)
