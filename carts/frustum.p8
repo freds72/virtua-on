@@ -481,8 +481,7 @@ function collect_model_faces(model,m,out)
 	-- main model
 	collect_faces(model.f,cam_pos,v_cache,out)
 	-- sub models	
-	local m_orig=m_clone(m)
-
+	local m_orig=m_clone(m) 
 	for name,vgroup in pairs(model.vgroups) do
 		-- get world group position
 		local pos=v_clone(vgroup.offset)
@@ -492,10 +491,10 @@ function collect_model_faces(model,m,out)
 		vgm=make_m_from_euler(time(),0,0)
 
 		-- cam to vgroup space
-		local x,y,z=x-vgroup.offset[1],y-vgroup.offset[2],z-vgroup.offset[3]
-		local cam_pos={vgm[1]*x+vgm[2]*y+vgm[3]*z,vgm[5]*x+vgm[6]*y+vgm[7]*z,vgm[9]*x+vgm[10]*y+vgm[11]*z}
+		local x,y,z=cam_pos[1]-vgroup.offset[1],cam_pos[2]-vgroup.offset[2],cam_pos[3]-vgroup.offset[3]
+		local vg_cam_pos={vgm[1]*x+vgm[2]*y+vgm[3]*z,vgm[5]*x+vgm[6]*y+vgm[7]*z,vgm[9]*x+vgm[10]*y+vgm[11]*z}
 
-		collect_faces(vgroup.f,cam_pos,v_cache,out)
+		collect_faces(vgroup.f,vg_cam_pos,v_cache,out)
 	end
 end
 
