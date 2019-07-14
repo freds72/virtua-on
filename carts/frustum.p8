@@ -209,8 +209,8 @@ function make_cam()
    			-- height
 			angle=a
 			-- inverse view matrix
-			m=make_m_from_euler(0.06,a,0)
-			v_add(pos,m_fwd(m),-0.8)
+			m=make_m_from_euler(0.12,0,0)
+			v_add(pos,m_fwd(m),-0.5)
 			m_inv(m)
 		   	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
 			self.pos,self.m=pos,m
@@ -340,7 +340,7 @@ function make_plyr(p,angle)
 			-- update parts orientations
 			local rpm=-velocity*time()
 			self.rw=make_m_from_euler(rpm,0,0)
-			local wheel_m=make_m_from_euler(rpm,angle,0)
+			local wheel_m=make_m_from_euler(rpm,2*angle,0)
 			self.lfw=wheel_m
 			self.rfw=wheel_m
 		end
@@ -406,6 +406,8 @@ function face_collide(f,p,r)
 end
 
 function _init()
+	-- integrated fillp/color
+	poke(0x5f34,1)
 	track=all_models["track"]	
 end
 
@@ -508,7 +510,6 @@ end
 
 function draw_polys(polys,v_cache)
 	-- all poly are encoded with 2 colors
- 	fillp(0xa5a5)	
 	for i=1,#polys do
 		local d=polys[i]
 		cam:project_poly(d.v,d.f.c)
@@ -530,7 +531,6 @@ function draw_polys(polys,v_cache)
 			end
 		end
 	end
-	fillp()
 end
 
 function _draw()
@@ -644,8 +644,11 @@ function _draw()
 	-- m=make_m_from_euler(0,time()/16,0)
 	m_set_pos(m,pos)
 	-- car
-	local model=all_models["car"].lods[2]
+	local model=all_models["car"].lods[1]
 	total_faces=#model.f
+	for _,vgroup in pairs(model.vgroups) do
+		total_faces+=#vgroup.f
+	end
 	collect_model_faces(model,m,plyr,out)
  	sort(out)
 	draw_polys(out)
@@ -655,9 +658,9 @@ function _draw()
 	printxl(tostr(flr(time())),64,9)	
 	
 	local cpu=flr(1000*stat(1))/10
-	local mem=flr(100*stat(0))/10
+	local mem=ceil(stat(0))
 	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces--.."\n"..cam.pos[1].."/"..cam.pos[3]
-	printb(cpu,2,2,6,5)
+	printb(cpu,2,2,7,2)
 end
 
 -->8
@@ -733,6 +736,9 @@ end
 
 function unpack_face()
 	local f={flags=unpack_int(),c=unpack_int()}
+	if(f.c==0x50) f.c=0x0150
+	f.c+=0x1000.a5a5
+
 	f.ni=band(f.flags,2)>0 and 4 or 3
 	-- vertex indices
 	-- quad?
