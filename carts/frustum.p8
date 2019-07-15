@@ -197,17 +197,23 @@ end
 
 -->8
 -- main engine
+-- global vars
+local track,plyr,cam
+local all_models={}
+
+-- camera
 function make_cam()
-	local angle,angles=0,{}
+	local angles={}
 	for i=0,15 do
 		add(angles,atan2(7.5,i-7.5))
 	end
 	return {
 		pos={0,0,0},
+		angle=0,
 		track=function(self,pos,a,m)
    			pos=v_clone(pos)
    			-- height
-			angle=a
+			self.angle=a
 			-- inverse view matrix
 			m=make_m_from_euler(0.12,0,0)
 			v_add(pos,m_fwd(m),-0.5)
@@ -234,7 +240,7 @@ function make_cam()
    			local tiles={[x0+shl(y0,5)]=0} 
    
    			for i=1,16 do   	
-				local a=angles[i]+angle
+				local a=angles[i]+self.angle
 				local v,u=cos(a),-sin(a)
 				
 				local mapx,mapy=x0,y0
@@ -276,9 +282,10 @@ function make_cam()
 end
 
 function make_plyr(p,angle)
-	local pos=v_clone(p)
+	-- last contact face
 	local oldf
-	local velocity=0
+	-- position
+	local pos,velocity=v_clone(p),0
 	local vangle=0
 	return {
 		get_pos=function()
@@ -347,14 +354,6 @@ function make_plyr(p,angle)
 	}
 end
 
-local cam=make_cam(63.5,63.5,63.5)
-local plyr=make_plyr({-24,0,-6},0)
-local plane=make_plane(8)
-local time_t=0
-local all_models={}
-
-local track
-
 local dither_pat={0xffff,0x7fff,0x7fdf,0x5fdf,0x5f5f,0x5b5f,0x5b5e,0x5a5e,0x5a5a,0x1a5a,0x1a4a,0x0a4a,0x0a0a,0x020a,0x0208,0x0000}
 
 
@@ -405,21 +404,116 @@ function face_collide(f,p,r)
 	return hit,force
 end
 
+-- game states
+-- transition to next state
+function next_state(state)
+	draw_state,update_state=state()
+end
+
+function start_state()
+	-- reset arrays & counters
+	time_t=0
+
+	-- start over
+	track:reset()
+
+	-- create player in correct direction
+	plyr=make_plyr(track:get_startpos())
+
+	local ttl=120 -- 4*30
+	return 
+		-- draw
+		function()
+			local t=flr(ttl/30)
+			-- todo: allow acceleration during "go"
+			-- todo: boost if acceleration is at frame 15
+			print(t==0 and "go!" or tostr(t),60,46,21,2)
+		end,
+		-- update
+		function()
+			if(ttl%30==0) sfx(ttl<=30 and 2 or 1)
+			ttl-=1
+			if(ttl<0) next_state(play_state)
+		end
+end
+
+function play_state()
+	local ttl,t=30*30,0
+	return
+		-- draw
+		function()
+			printb("lap time\n"..time_tostr(t),90,2,7,0)
+			printb("time",52,2,7,0)
+			printxl(tostr(flr(ttl/30)),64,9)
+		end,
+		-- update
+		function()
+			ttl-=1
+			if(ttl==1) next_state(gameover_state)
+			
+			t+=1
+			track:update()
+
+			plyr:handle_input()	
+		end
+end
+
+function gameover_state()
+	local ttl=900
+	return 
+		-- draw
+		function()
+			print("game over",35,46,11)
+			?"press ❎/🅾️ to continue",24,110,ttl%2==0 and 7 or 11
+		end,
+		-- update
+		function()
+			ttl-=1
+			if btnp(4) or btnp(5) or ttl<0 then
+				next_state(start_state)
+			end
+		end
+end
+
 function _init()
 	-- integrated fillp/color
 	poke(0x5f34,1)
-	track=all_models["track"]	
+
+	-- clear screen
+	cls()
+	-- first track data cart
+	reload(0,0,0x4300,"track_0.p8")
+	track=unpack_track()
+	track.reset=function()
+	end
+	track.update=function()
+	end
+	track.get_startpos=function()
+		return {-24,0,-6},0
+	end
+	-- 3d models cart
+	reload(0,0,0x4300,"track_models.p8")
+	-- load regular 3d models
+	unpack_models()
+	-- restore
+	reload()
+
+	-- init state machine
+	next_state(start_state)
+
+	cam=make_cam()
 end
 
 function _update()
-	time_t+=1
+	-- basic state mgt
+	update_state()
 
-	plyr:handle_input()
-	
+	-- todo: update all actors
 	plyr:update()
 	
-	cam:track(plyr:get_pos())
-	
+	if plyr then
+		cam:track(plyr:get_pos())
+	end
 end
 
 local sessionid=0
@@ -536,14 +630,11 @@ end
 function _draw()
 	sessionid+=1
 
-	local pos,angle=plyr:get_pos()
-
 	-- background
-	local x0=-(angle*128)%128
+	local x0=-(cam.angle*128)%128
  	map(0,0,x0,0)
  	if x0>0 then
- 		x0-=128
-	 	map(0,0,x0,0)
+	 	map(0,0,x0-128,0)
  	end
 
 	local p,m={},cam.m
@@ -652,11 +743,9 @@ function _draw()
 	collect_model_faces(model,m,plyr,out)
  	sort(out)
 	draw_polys(out)
-
-	printb("lap time\n"..time_tostr(time_t),90,2,7,0)
-	printb("time",52,2,7,0)
-	printxl(tostr(flr(time())),64,9)	
 	
+	draw_state()
+
 	local cpu=flr(1000*stat(1))/10
 	local mem=ceil(stat(0))
 	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces--.."\n"..cam.pos[1].."/"..cam.pos[3]
@@ -837,7 +926,7 @@ end
 -- unpack multi-cart track
 function unpack_track()
 	mem=0
-	local model,name,scale={v={},f={},n={},cp={},voxels={},ground={}},unpack_string(),1/unpack_int()
+	local model={v={},f={},n={},cp={},voxels={},ground={}}
 	-- vertices + faces + normal data
 	unpack_model(model)
 
@@ -855,21 +944,9 @@ function unpack_track()
 		-- list of ground faces per voxel
 		model.ground[id]=#solid_faces>0 and solid_faces
 	end)
-	-- index by name
-	all_models[name]=model
+	return model	
 end
 
--- clear screen
-cls()
--- first track data cart
-reload(0,0,0x4300,"track_0.p8")
-unpack_track()
--- 3d models cart
-reload(0,0,0x4300,"track_models.p8")
--- load regular 3d models
-unpack_models()
--- restore
-reload()
 
 -->8
 -- trifill & clipping
