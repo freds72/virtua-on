@@ -131,15 +131,6 @@ function m_fwd(m)
 	return {m[9],m[10],m[11]}
 end
 
-function make_plane(width)
-	return {
-		{0,0,0},
-		{width,0,0},
-		{width,0,width},
-		{0,0,width}
-	}
-end
-
 -- sort
 -- https://github.com/morgan3d/misc/tree/master/p8sort
 -- 
@@ -216,7 +207,7 @@ function make_cam()
 			self.angle=a
 			-- inverse view matrix
 			m=make_m_from_euler(0.12,0,0)
-			v_add(pos,m_fwd(m),-0.5)
+			v_add(pos,m_fwd(m),-1.5)
 			m_inv(m)
 		   	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
 			self.pos,self.m=pos,m
@@ -418,7 +409,7 @@ function start_state()
 	track:reset()
 
 	-- create player in correct direction
-	plyr=make_plyr(track:get_startpos())
+	plyr=make_plyr(track.start_pos,0)
 
 	local ttl=120 -- 4*30
 	return 
@@ -487,9 +478,6 @@ function _init()
 	track.reset=function()
 	end
 	track.update=function()
-	end
-	track.get_startpos=function()
-		return {-24,0,-6},0
 	end
 	-- 3d models cart
 	reload(0,0,0x4300,"track_models.p8")
@@ -661,35 +649,6 @@ function _draw()
  
 	local tiles=cam:visible_tiles()
 
-	--[[
-	function draw_voxel_plane(k,c)
-		local i,j=k%32,flr(k/32)
- 		local offset={8*i-128,0,8*j-128}
-		local verts={}
-		for vi,v in pairs(plane) do			
- 			v=v_clone(v)
- 			v_add(v,offset)
- 			v_add(v,cam.pos,-1)
-	 		m_x_v(cam.m,v)
-			verts[vi]=v
-		end
-		local faces=track.voxels[k]
-		if faces then
-			fillp() 
-		else
-			fillp(0xa5a5)
-		end
-		verts=z_poly_clip(z_near,verts)
-		project_poly(verts,c)
-	end
-
- 	for k,_ in pairs(tiles) do
-	 	draw_voxel_plane(k,0x21)
-		--if(faces) print(#faces,x0,y0-8,7)
-	end
-	fillp()
-	]]
-
 	local out={}
 	local total_faces=0
 	-- get visible voxels
@@ -706,28 +665,6 @@ function _draw()
 
  	sort(out)
 	draw_polys(out,v_cache)
-
-	--[[
-	for k,dist in pairs(tiles) do
-		local faces=track.voxels[k]
-		if faces then
-			for _,f in pairs(faces) do
-				if f.borders then
-					for _,b in pairs(f.borders) do
-						local x,y,z=b.v[1]+cx,b.v[2]+cy,b.v[3]+cz
-						a={m[1]*x+m[5]*y+m[9]*z,m[2]*x+m[6]*y+m[10]*z,m[3]*x+m[7]*y+m[11]*z}
-						-- cam to screen
-						local w0=64/a[3]
-						if w0>0 then
-							local x0,y0=64+a[1]*w0,64-a[2]*w0
-							circ(x0,y0,2,8)
-						end
-					end
-				end
-			end
-		end
-	end
-	]]
 
 	-- clear vertex cache
 	out={}
@@ -812,6 +749,11 @@ function unpack_array(fn)
 		fn(i)
 	end
 end
+-- unpack a vector
+function unpack_v(scale)
+	return {unpack_double(scale),unpack_double(scale),unpack_double(scale)}
+end
+
 -- valid chars for model names
 local itoa='_0123456789abcdefghijklmnopqrstuvwxyz'
 function unpack_string()
@@ -841,8 +783,7 @@ end
 function unpack_model(model,scale)
 	-- vertices
 	unpack_array(function()
-		local v={unpack_double(scale),unpack_double(scale),unpack_double(scale)}
-		add(model.v,v)
+		add(model.v,unpack_v(scale))
 	end)
 
 	-- faces
@@ -874,7 +815,7 @@ function unpack_model(model,scale)
 			end
 		end
 		-- normal
-		f.n={unpack_double(),unpack_double(),unpack_double()}
+		f.n=unpack_v()
 		-- viz check
 		f.cp=v_dot(f.n,model.v[f[1]])
 
@@ -901,12 +842,12 @@ function unpack_models()
 			-- unpack vertex groups (as sub model)
 			unpack_array(function()				
 				local name=unpack_string()
-				local vgroup={offset={unpack_double(scale),unpack_double(scale),unpack_double(scale)},f={}}
+				local vgroup={offset=unpack_v(scale),f={}}
 				-- faces
 				unpack_array(function()
 					local f=unpack_face()
 					-- normal
-					f.n={unpack_double(),unpack_double(),unpack_double()}
+					f.n=unpack_v()
 					-- viz check
 					f.cp=v_dot(f.n,lod.v[f[1]])
 
@@ -926,7 +867,14 @@ end
 -- unpack multi-cart track
 function unpack_track()
 	mem=0
-	local model={v={},f={},n={},cp={},voxels={},ground={}}
+	local model={
+		v={},
+		f={},
+		n={},
+		cp={},
+		voxels={},
+		ground={},
+		start_pos=unpack_v()}
 	-- vertices + faces + normal data
 	unpack_model(model)
 

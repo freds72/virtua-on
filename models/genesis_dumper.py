@@ -17,10 +17,10 @@ my_font = pygame.font.SysFont("Courier", 16)
 # Genesis
 # mem_offset = 0x00138200 # Track 1
 # mem_offset = 0x0014c200 # Track 2
-# mem_offset = 0x00164298 # Track 3 - 167 segments - !!! missing last pin curve !!
+mem_offset = 0x00164298 # Track 3 - 167 segments
 # mem_offset = 0x0014c200
 # mem_offset = 0x00108000 # 0x0010c000 # car??
-mem_offset = 0x0012bd7c # rear tires
+# mem_offset = 0x0012bd7c # rear tires
 #mem_offset = 0x0010c000 # 
 
 # mem_offset = 0x0109f2a # car body 2

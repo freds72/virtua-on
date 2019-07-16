@@ -13,9 +13,9 @@ def makeMaterial(name, diffuse, culling):
     return mat
  
 
-# mem_offset = 0x00138200 # Track 1 (Genesis)
-# mem_offset = 0x0014c200 # Track 2 (Genesis)
-# mem_offset = 0x00164290 # Track 2 (Genesis)
+# mem_offset = 0x00138200 # Track 1 (Genesis) - 130 segments
+# mem_offset = 0x0014c200 # Track 2 (Genesis) - 130
+# mem_offset = 0x00164298 # Track 3 (Genesis) - 167 
 # mem_offset = 0x0014c200
 # mem_offset = 0x00108000
 # mem_offset = 0xa000 # start of poly data (32x)
