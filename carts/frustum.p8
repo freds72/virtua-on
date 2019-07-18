@@ -206,7 +206,7 @@ function make_cam()
    			-- height
 			self.angle=a
 			-- inverse view matrix
-			m=make_m_from_euler(0.12,0,0)
+			m=make_m_from_euler(0.12,a,0)
 			v_add(pos,m_fwd(m),-1.5)
 			m_inv(m)
 		   	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
@@ -296,16 +296,16 @@ function make_plyr(p,angle)
 		update=function(self)
   			vangle*=0.8
   			velocity*=0.9
-			angle*=0.8
+			-- angle*=0.8
 
 			angle+=vangle/512
-			angle=mid(angle,-0.08,0.08)
+			-- angle=mid(angle,-0.08,0.08)
 
 			-- update orientation matrix
 			local m=make_m_from_euler(0,angle,0)
 			-- backup current position
 			local p0=v_clone(pos)
-			v_add(pos,m_fwd(m),velocity/4)
+			v_add(pos,m_fwd(m),velocity/8)
 			v_add(pos,v_up,-0.4)
 
 			local f1=find_face(pos,oldf)
@@ -518,7 +518,7 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 			local z,y,outcode,verts,is_clipped=0,0,0xffff,{},0
 			-- project vertices
 			for ki=1,face.ni do
-				local a=v_cache(face[ki])
+				local a=v_cache[face[ki]]
 				y+=a[2]
 				z+=a[3]
 				outcode=band(outcode,a.outcode)
@@ -548,15 +548,15 @@ function collect_model_faces(model,m,parts,out)
 	-- cam pos in object space
 	local p,cm={},cam.m
 	-- vertex group matrix
+	-- using close to avoid repeating the cache function
 	local vgm
 	local cx,cy,cz=cm[13],cm[14],cm[15]
 	local x,y,z=-cx-m[13],-cy-m[14],-cz-m[15]
 	local cam_pos={m[1]*x+m[2]*y+m[3]*z,m[5]*x+m[6]*y+m[7]*z,m[9]*x+m[10]*y+m[11]*z}
 	
-	local function v_cache(k)
-		local a=p[k]
-		if not a then
-			a=v_clone(model.v[k])
+	local v_cache={
+		__index=function(t,k)
+			local a=v_clone(model.v[k])
 			-- relative to vgroup
 			if vgm then
 				m_x_v(vgm,a)
@@ -566,12 +566,13 @@ function collect_model_faces(model,m,parts,out)
 			-- world to cam
 			local ax,ay,az=a[1]+cx,a[2]+cy,a[3]+cz
 			a={cm[1]*ax+cm[5]*ay+cm[9]*az,cm[2]*ax+cm[6]*ay+cm[10]*az,cm[3]*ax+cm[7]*ay+cm[11]*az,outcode=0}
-			p[k]=a
+			t[k]=a
+			return a
 		end
-		return a
-	end
+	}
+	setmetatable(p,v_cache)
 	-- main model
-	collect_faces(model.f,cam_pos,v_cache,out)
+	collect_faces(model.f,cam_pos,p,out)
 	-- sub models	
 	local m_orig=m_clone(m) 
 	for name,vgroup in pairs(model.vgroups) do
@@ -580,13 +581,14 @@ function collect_model_faces(model,m,parts,out)
 		m_x_v(m_orig,pos)		
 		m_set_pos(m,pos)
 		
+		-- lookup vertex group orientation from parts
 		vgm=parts[name]
 
 		-- cam to vgroup space
 		local x,y,z=cam_pos[1]-vgroup.offset[1],cam_pos[2]-vgroup.offset[2],cam_pos[3]-vgroup.offset[3]
 		local vg_cam_pos={vgm[1]*x+vgm[2]*y+vgm[3]*z,vgm[5]*x+vgm[6]*y+vgm[7]*z,vgm[9]*x+vgm[10]*y+vgm[11]*z}
 
-		collect_faces(vgroup.f,vg_cam_pos,v_cache,out)
+		collect_faces(vgroup.f,vg_cam_pos,p,out)
 	end
 end
 
@@ -600,7 +602,7 @@ function draw_polys(polys,v_cache)
 			for _,face in pairs(d.f.inner) do
 				local verts,outcode,is_clipped={},0xffff,0
 				for ki=1,face.ni do
-					local a=v_cache(face[ki])
+					local a=v_cache[face[ki]]
 					outcode=band(outcode,a.outcode)
 					-- behind near plane?
 					is_clipped+=band(a.outcode,2)
@@ -627,26 +629,25 @@ function _draw()
 
 	local p,m={},cam.m
 	local cx,cy,cz=m[13],m[14],m[15]
-	local function v_cache(k)
-		local a=p[k]
-		if not a then
+	local v_cache={
+		__index=function(t,k)
 			-- world to cam
 			local v=track.v[k]
 			local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
-			a={m[1]*x+m[5]*y+m[9]*z,m[2]*x+m[6]*y+m[10]*z,m[3]*x+m[7]*y+m[11]*z}
-
-			local ax,az=a[1],a[3]
+			local ax,az=m[1]*x+m[5]*y+m[9]*z,m[3]*x+m[7]*y+m[11]*z
 			local outcode=az>z_near and k_far or k_near
 			if ax>az then outcode+=k_right
 			elseif -ax>az then outcode+=k_left
 			end	
-			a.outcode=outcode
-
-			p[k]=a
+			local a={ax,m[2]*x+m[6]*y+m[10]*z,az,outcode=outcode}
+			-- store the value
+			t[k]=a
+			-- return value for current call
+			return a
 		end
-		return a
-	end
- 
+	}
+	setmetatable(p,v_cache)
+
 	local tiles=cam:visible_tiles()
 
 	local out={}
@@ -657,18 +658,28 @@ function _draw()
 		local faces=track.voxels[k]
 		if faces then
 			total_faces+=#faces
-			collect_faces(faces,cam.pos,v_cache,out,dist)
+			collect_faces(faces,cam.pos,p,out,dist)
 		end 
 	end
 		
 	-- track
 
  	sort(out)
-	draw_polys(out,v_cache)
+	draw_polys(out,p)
+
+	local pos,angle,m=plyr:get_pos()
+	local cs,ss=cos(angle),-sin(angle)
+	-- draw npc path
+	for i=1,#track.npc_path do
+		local v=track.npc_path[i]
+		local x,y=v[1]-pos[1],v[3]-pos[3]
+		x,y=cs*x-ss*y,ss*x+cs*y
+		pset(96+0.3*x,64-0.3*y,0x1000)
+	end
+	circfill(96,64,1,0x8)
 
 	-- clear vertex cache
 	out={}
-	local pos,angle,m=plyr:get_pos()
 	-- m=make_m_from_euler(0,time()/16,0)
 	m_set_pos(m,pos)
 	-- car
@@ -874,7 +885,8 @@ function unpack_track()
 		cp={},
 		voxels={},
 		ground={},
-		start_pos=unpack_v()}
+		start_pos=unpack_v(),
+		npc_path={}}
 	-- vertices + faces + normal data
 	unpack_model(model)
 
@@ -891,6 +903,10 @@ function unpack_track()
 		model.voxels[id]=faces
 		-- list of ground faces per voxel
 		model.ground[id]=#solid_faces>0 and solid_faces
+	end)
+	-- npc path
+	unpack_array(function()
+		add(model.npc_path,{unpack_double(),0,unpack_double()})
 	end)
 	return model	
 end
