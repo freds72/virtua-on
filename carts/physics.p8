@@ -316,6 +316,12 @@ function v_scale(v,scale)
 	v[2]*=scale
 	v[3]*=scale
 end
+function v_clamp(v,l)	
+	local d=v_dot(v,v)
+	if d>l*l then
+		v_scale(v,l/sqrt(d))
+	end
+end
 function v_add(v,dv,scale)
 	scale=scale or 1
 	v[1]+=scale*dv[1]
@@ -502,9 +508,12 @@ function make_track(segments)
 			return to_v(checkpoint)
 		end,
 		draw=function(self)
-			for i=0,n-1 do
+			local x0,y0=cam:project(to_v(0))
+			local x1,y1=cam:project(to_v(1))
+			line(x0,y0,x1,y1,11)
+			for i=2,n-1 do
 				local x,y=cam:project(to_v(i))
-				pset(x,y,11)
+				line(x,y)
 			end
 			local x,y=cam:project(to_v(checkpoint))
 			circfill(x,y,1,8)
@@ -705,33 +714,13 @@ function make_npc(p,angle,density,track)
 	local velocity,angularv={0,0,0},0
 	local forces,torque={0,0,0},0
 
-	local area=0
-	local i=0
-	local inv3=1/3
-	
 	local v={
 		{-1,0,2},
 		{1,0,2},
 		{1,0,-2},
 		{-1,0,-2}
 	}
-	for k=0,#v-1 do
-		-- triangle vertices, third vertex implied as (0, 0)
-		local v1,v2=v[k%#v+1],v[(k+1)%#v+1]
-		local d=-v2_cross(v1,v2)
-		local tarea=0.5*d
-		area+=tarea
-		
-		local x,z=v1[1]*v1[1]+v2[1]*v1[1]+v2[1]*v2[1],v1[3]*v1[3]+v2[3]*v1[3]+v2[3]*v2[3]
-		i+=0.25*inv3*d*(x+z)
-	end
-	
-	-- physic body
-	local mass=density*area
-	local inv_mass=1/mass
-	i*=density
-	local inv_i=1/i
-	
+
 	return {
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
@@ -766,6 +755,7 @@ function make_npc(p,angle,density,track)
 			end
 		end,		
 		apply_force=function(self,f,p)
+			--[[
 			local x0,y0=cam:project(p)
 			circfill(x0,y0,2,12)
 			vf=v_clone(p)
@@ -773,30 +763,31 @@ function make_npc(p,angle,density,track)
 			local x1,y1=cam:project(vf)
 			line(x0,y0,x1,y1,12)
 			flip()
+			]]
 
 			v_add(forces,f)
 			torque+=v2_cross(make_v(self.pos,p),f)
 		end,
 		apply_impulse=function(self,f,p)
 			v_add(velocity,f,inv_mass)
-			angularv+=inv_i*v2_cross(make_v(self.pos,p),f)
-			angularv=mid(angularv,-1,1)
+			angularv=mid(angularv+v2_cross(make_v(self.pos,p),f),-1,1)
 		end,
-		integrate_forces=function(self,dt)
-			v_add(velocity,forces,inv_mass*dt*0.5)
-			angularv+=torque*inv_i*dt*0.5
+		integrate_forces=function(self)
+			v_add(velocity,forces,0.5)
+			angularv=mid(angularv+torque*0.5,-1,1)
 			-- apply some damping
 			angularv*=0.92
+			v_scale(velocity,0.97)
 			-- some friction
-			v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
+			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
 		end,
-		integrate_v=function(self,dt)
+		integrate_v=function(self)
 		 	-- update pos & orientation
-			v_add(self.pos,velocity,dt)
-			angle+=dt*angularv			
+			v_add(self.pos,velocity)
+			angle+=angularv			
 			self.m=make_m_from_euler(0,angle,0)
 
-			self:integrate_forces(dt)
+			self:integrate_forces()
 		end,
 		reset=function(self)
 			forces,torque={0,0,0},0
@@ -807,14 +798,14 @@ function make_npc(p,angle,density,track)
 			v_add(p,m_fwd(self.m),1)
 
 			-- get target point
-			local target=track:update(p,4)
+			local target=track:update(p,24)
 			local f=make_v(p,target)
-			v_scale(f,8)
+			v_clamp(f,0.02)
 			-- todo: clamp
 
 
 			-- steer toward track
-			self:apply_impulse(f,p)			
+			self:apply_force(f,p)			
 		end
 	}
 end
@@ -838,7 +829,7 @@ function _update()
 
 	for _,npc in pairs(npcs) do
 		npc:update()
-		npc:integrate_v(1/30)
+		npc:integrate_v()
 		npc:reset()	
 	end
 end
