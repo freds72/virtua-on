@@ -515,8 +515,6 @@ function make_track(segments)
 				local x,y=cam:project(to_v(i))
 				line(x,y)
 			end
-			local x,y=cam:project(to_v(checkpoint))
-			circfill(x,y,1,8)
 		end
 	}
 end
@@ -710,6 +708,8 @@ function make_plyr(p,a,density)
 	}
 end
 
+local npcs={}
+
 function make_npc(p,angle,density,track)
 	local velocity,angularv={0,0,0},0
 	local forces,torque={0,0,0},0
@@ -745,6 +745,10 @@ function make_npc(p,angle,density,track)
 			flip()
 		end,	
 		draw=function(self)	
+
+			local x,y=cam:project(track:get_next())
+			circfill(x,y,1,8)
+
 			local v0=v[#v]
 			local x0,y0=cam:project(self:apply(v0))
 			for i=1,#v do
@@ -801,22 +805,34 @@ function make_npc(p,angle,density,track)
 			local target=track:update(p,24)
 			local f=make_v(p,target)
 			v_clamp(f,0.02)
-			-- todo: clamp
-
-
+			
 			-- steer toward track
 			self:apply_force(f,p)			
+
+			-- avoid others
+			for _,npc in pairs(npcs) do				
+				if npc!=self and v_dist(npc.pos,self.pos)<16 then
+					local f_avoid=make_v(npc.pos,self.pos)
+					v_scale(f_avoid,0.01)
+					self:apply_force(f_avoid,p)			
+				end
+			end
 		end
 	}
 end
 
 local plyr=make_plyr({0,0,0},0,2)
-local npc_track
-local npcs={}
+-- only for display
+local static_track=make_track(track_data)
 
 function _init()
-	npc_track=make_track(track_data)
-	add(npcs, make_npc(npc_track:get_next(),0,2,npc_track))
+	for i=1,5 do
+		local npc_track=make_track(track_data)
+		local p=v_clone(npc_track:get_next())
+		p[1]+=(1-rnd(2))
+		p[3]+=(1-rnd(2))
+		add(npcs, make_npc(p,0,2,npc_track))
+	end
 end
 
 function _update()
@@ -842,7 +858,7 @@ function _draw()
 
 	cam:track(npcs[1].pos)
 
-	npc_track:draw()
+	static_track:draw()
 	for _,npc in pairs(npcs) do
 		npc:draw()
 	end
