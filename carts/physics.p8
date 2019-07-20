@@ -272,37 +272,45 @@ function make_cam(scale)
 end
 
 local cam=make_cam(5)
-
 function make_skidmarks()
-	local t,skidmarks=0,{}
+	local skidmarks={}
+	local t=0
 	return {
-		add=function(self,pos)
-			if t==0 then
-			 t=20
-				if #skidmarks>=20 then
-				 for i=2,#skidmarks do
-				 	skidmarks[i-1]=skidmarks[i]
-				 end
-				 skidmarks[20]=nil
+		make_emitter=function()
+			local emit_t=0
+			local start_pos
+			return function(pos)
+				-- broken skidmark?
+				if emit_t!=t then
+					start_pos=nil
 				end
-				add(skidmarks,v_clone(pos))
+				if(not start_pos) start_pos=v_clone(pos)
+				-- next expected update
+				emit_t=t+1
+				if emit_t>0 and emit_t%10==0 then
+					local end_pos=v_clone(pos)
+					add(skidmarks,{start_pos,end_pos,0})
+					start_pos=end_pos
+				end
 			end
 		end,
 		update=function(self)
-			t-=1			
+			t+=1
+			for s in all(skidmarks) do
+				s[3]+=1
+				if(s[3]>60) del(skidmarks,s)
+			end
 		end,
 		draw=function(self)
-			if(#skidmarks<2) return
-			local x0,y0=cam:project(skidmarks[1])
-			
-			for i=2,#skidmarks do
-				local x1,y1=cam:project(skidmarks[i])
+			for _,s in pairs(skidmarks) do
+				local x0,y0=cam:project(s[1])
+				local x1,y1=cam:project(s[2])
 				line(x0,y0,x1,y1,5)
-				x0,y0=x1,y1
 			end
 		end
 	}
 end
+local skidmarks=make_skidmarks()
 
 function make_track(segments)
 	-- "close" track
@@ -394,7 +402,7 @@ function make_checkpoints(segments)
 			print("time",56,2,7)
 			print(ceil(remaining_t/30),60,10,10)
 
-			print("lap time: "..best_i,70,2,7)
+			print("lap time: ",96,2,7)
 			local y=8
 			for i=1,#laps do
 				print(i,96,y,9)
@@ -493,12 +501,15 @@ function make_rigidbody(p,angle)
 
 			-- reset
 			forces,torque={0,0,0},0
+		end,
+		get_speed=function(self)
+			return 300*3.6*(v_dot(velocity,velocity)^0.5)
 		end
 	}
 end
 
 function make_plyr(p,a)
-	local steering_angle,rpm,max_rpm=0,0,1
+	local steering_angle,rpm,max_rpm=0,0,0.65
 
 	local body=make_rigidbody(p,a)
 	local skidmarks={
@@ -526,7 +537,7 @@ function make_plyr(p,a)
 		end
 
 		if rpm then
-			-- slide?
+			-- slide (or brake)?
 			if v_dot(relv,fwd)<0.8 then
 				slide=true
 			end
@@ -547,7 +558,7 @@ function make_plyr(p,a)
 
 		-- accelerate
 		if btn(2) then
-			rpm=min(rpm+6,max_rpm)
+			rpm=min(rpm+0.1,max_rpm)
 		end
 		--[[
 		local fwd=m_fwd(self.m)
@@ -579,7 +590,6 @@ function make_plyr(p,a)
 			s:update()
 		end
 	end
-
 	-- wrapper
 	return body
 end
@@ -617,6 +627,14 @@ function make_npc(p,angle,track)
 		-- steer toward track
 		self:apply_force(right,p)
 
+		-- avoid others
+		for _,npc in pairs(actors) do				
+			if npc!=self and v_dist(npc.pos,self.pos)<16 then
+				local f_avoid=v2_ortho(make_v(npc.pos,self.pos),-0.2)
+				self:apply_force(f_avoid,p)			
+			end
+		end
+
 		-- rear wheel
 		p=v_clone(self.pos)
 		v_add(p,fwd,-1.2)
@@ -627,15 +645,6 @@ function make_npc(p,angle,track)
 		self:apply_force(engine,p)
 
 		--if(true) return
-
-		-- avoid others
-		for _,npc in pairs(actors) do				
-			if npc!=self and v_dist(npc.pos,self.pos)<16 then
-				local f_avoid=make_v(npc.pos,self.pos)
-				v_scale(f_avoid,0.9)
-				self:apply_force(f_avoid,self.pos)			
-			end
-		end
 
 		-- rear wheel
 		-- point velocity
@@ -653,7 +662,7 @@ function make_npc(p,angle,track)
 				v_scale(right,-sa)
 				add(debug_vectors,{f=right,p=p,c=5,scale=sa})
 
-				--self:apply_impulse(right,p)			
+				self:apply_impulse(right,p)			
 			end
 		end
 	end
@@ -664,7 +673,129 @@ function make_npc(p,angle,track)
 	return body
 end
 
-local plyr=make_plyr({-28,0,-33},0)
+function make_ball(p,angle)
+	local velocity,angularv={0,0,0},0
+	local forces,torque={0,0,0},0
+
+	local rpm,max_rpm=0,0.6
+	local steering_angle=0
+	local sliding_t=0
+
+	local v={
+		{-0.5,0,2},
+		{0.5,0,2},
+		{1,0,-2},
+		{-1,0,-2}
+	}
+
+	local skidmark_emitters={
+		skidmarks:make_emitter(),
+		skidmarks:make_emitter(),
+		skidmarks:make_emitter(),
+		skidmarks:make_emitter()
+	}
+
+	return {
+		pos=v_clone(p),
+		m=make_m_from_euler(0,a,0),
+		-- obj to world space
+		apply=function(self,p)
+			p=m_x_v(self.m,p)
+			v_add(p,self.pos)
+			return p
+		end,
+		draw=function(self)	
+			local x0,y0=cam:project(self:apply(v[#v]))
+			for i=1,#v do
+				local x1,y1=cam:project(self:apply(v[i]))
+				line(x0,y0,x1,y1,7)
+				x0,y0=x1,y1			
+			end
+
+			print(sliding_t,2,8,7)
+
+		end,		
+		apply_force_and_torque=function(self,f,t)
+			add(debug_vectors,{f=f,p=p,c=11,scale=t})
+
+			v_add(forces,f)
+			torque+=t
+		end,
+		prepare=function(self)
+			-- update velocities
+			v_add(velocity,forces,0.5/30)
+			angularv+=torque*0.5/30
+
+			-- apply some damping
+			angularv*=0.86
+			v_scale(velocity,0.97)
+			-- some friction
+			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
+		end,
+		integrate=function(self)
+		 	-- update pos & orientation
+			v_add(self.pos,velocity)
+			-- fix
+			angularv=mid(angularv,-1,1)
+			angle+=angularv			
+			self.m=make_m_from_euler(0,angle,0)
+
+			-- reset
+			forces,torque={0,0,0},0
+		end,
+		get_speed=function(self)
+			return 300*3.6*(v_dot(velocity,velocity)^0.5)
+		end,
+		control=function(self)	
+			local da=0
+			if(btn(0)) da=1
+			if(btn(1)) da=-1
+
+			-- accelerate
+			if btn(2) then
+				rpm=min(rpm+0.1,max_rpm)
+			end
+
+			-- steering angle
+			steering_angle+=da/8
+			local steering=1-0.1*steering_angle
+
+			-- longitudinal slip ratio
+			local right=m_right(self.m)
+			local sr=v_dot(right,velocity)
+			local last_sliding_t=sliding_t
+			if abs(sr)>0.12 then
+				sliding_t+=1
+			else
+				-- not sliding
+				sliding_t=0
+			end
+
+			sr=mid(sr,-0.10,0.10)
+			sr=1-abs(sr)/0.40
+			steering_angle*=sr
+
+			local fwd=m_fwd(self.m)
+			v_scale(fwd,rpm*sr)			
+
+			self:apply_force_and_torque(fwd,-0.25*steering_angle)
+
+			-- sliding?
+			if last_sliding_t!=sliding_t then
+				for i=1,#v do
+					skidmark_emitters[i](self:apply(v[i]))
+				end			
+			end
+		end,
+		update=function(self)
+			steering_angle*=0.8
+			rpm*=0.97
+		end
+	}	
+end
+
+
+local plyr=make_ball({-28,0,-33},0)
 local checkpoints=make_checkpoints(checkpoint_data)
 
 -- only for display
@@ -700,6 +831,8 @@ function _update()
 		npc:control_ai()
 		npc:update()
 	end
+
+	skidmarks:update()
 end
 
 function _draw()
@@ -710,6 +843,9 @@ function _draw()
 	cam:track(plyr and plyr.pos or npcs[1].pos)
 
 	static_track:draw()
+
+	skidmarks:draw()
+
 	for _,npc in pairs(npcs) do
 		npc:draw()
 	end
@@ -717,6 +853,8 @@ function _draw()
 	-- draw_debug_vectors()
 
 	checkpoints:draw()
+
+	if(plyr) print(plyr:get_speed().."km/h",2,2,7)
 
 	local cpu=flr(1000*stat(1))/10
 	print(cpu.."%",2,118,2)
