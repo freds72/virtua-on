@@ -778,7 +778,7 @@ function make_ball(p,angle)
 			local fwd=m_fwd(self.m)
 			v_scale(fwd,rpm*sr)			
 
-			self:apply_force_and_torque(fwd,-0.25*steering_angle)
+			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
 
 			-- sliding?
 			if last_sliding_t!=sliding_t then
