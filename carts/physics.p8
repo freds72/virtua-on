@@ -146,6 +146,16 @@ function v_add(v,dv,scale)
 	v[2]+=scale*dv[2]
 	v[3]+=scale*dv[3]
 end
+-- safe vector length
+function v_len(v)
+	local x,y,z=v[1],v[2],v[3]
+	local d=max(max(abs(x),abs(y)),abs(z))
+	if(d<0.001) return 0
+	x/=d
+	y/=d
+	z/=d
+	return d*(x*x+y*y+z*z)^0.5
+end
 function v_normz(v)
 	local d=v_dot(v,v)
 	if d>0.001 then
@@ -271,7 +281,7 @@ function make_cam(scale)
 	}
 end
 
-local cam=make_cam(5)
+local cam=make_cam(3)
 function make_skidmarks()
 	local skidmarks={}
 	local t=0
@@ -356,7 +366,7 @@ function make_checkpoints(segments)
 	-- active index
 	local checkpoint=0
 	local function to_v(i)
-		return {segments[3*i+1],0,segments[3*i+2]},segments[3*checkpoint+3]
+		return {segments[3*i+1],0,segments[3*i+2]},segments[3*i+3]
 	end
 
 	-- previous laps
@@ -365,6 +375,9 @@ function make_checkpoints(segments)
 	-- remaining time before game over (+ some buffer time)
 	local lap_t,remaining_t,best_t,best_i=0,30*30,32000,1
 	return {	
+		get_next=function(self)
+			return to_v(checkpoint)
+		end,
 		update=function(self,pos)
 			remaining_t-=1
 			if remaining_t==0 then
@@ -419,7 +432,7 @@ local debug_vectors={}
 function draw_vector(f,p,c,v)
 	local x0,y0=cam:project(p)
 	p=v_clone(p)
-	v_add(p,f,100)
+	v_add(p,f)
 	local x1,y1=cam:project(p)
 	line(x0,y0,x1,y1,c)
 	if v then
@@ -433,162 +446,25 @@ function draw_debug_vectors()
 	end
 end
 
-function make_rigidbody(p,angle)
-	local velocity,angularv={0,0,0},0
-	local forces,torque={0,0,0},0
-
-	local v={
-		{-0.5,0,2},
-		{0.5,0,2},
-		{1,0,-2},
-		{-1,0,-2}
-	}
-
-	return {
-		pos=v_clone(p),
-		m=make_m_from_euler(0,a,0),
-		-- obj to world space
-		apply=function(self,p)
-			p=m_x_v(self.m,p)
-			v_add(p,self.pos)
-			return p
-		end,
-		pt_velocity=function(self,p)
-			local relv=v_clone(velocity)
-			v_add(relv,v2_ortho(make_v(self.pos,p),angularv))
-		 	return relv
-		end,	
-		draw=function(self)	
-			local x0,y0=cam:project(self:apply(v[#v]))
-			for i=1,#v do
-				local x1,y1=cam:project(self:apply(v[i]))
-				line(x0,y0,x1,y1,7)
-				x0,y0=x1,y1			
-			end
-			-- print(self.relv_len,x+3,y,7)
-		end,		
-		apply_force=function(self,f,p)
-			add(debug_vectors,{f=f,p=p,c=11})
-
-			v_add(forces,f)
-			torque+=-v2_cross(make_v(self.pos,p),f)
-		end,
-		apply_impulse=function(self,f,p)
-			-- debug
-			add(debug_vectors,{f=f,p=p,c=8})
-
-			v_add(velocity,f)
-			angularv+=-v2_cross(make_v(self.pos,p),f)
-		end,
-		prepare=function(self)
-			-- update velocities
-			v_add(velocity,forces,0.5/30)
-			angularv+=torque*0.5/30
-
-			-- apply some damping
-			angularv*=0.86
-			v_scale(velocity,0.97)
-			-- some friction
-			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
-		end,
-		integrate=function(self)
-		 	-- update pos & orientation
-			v_add(self.pos,velocity)
-			-- fix
-			angularv=mid(angularv,-1,1)
-			angle+=angularv			
-			self.m=make_m_from_euler(0,angle,0)
-
-			-- reset
-			forces,torque={0,0,0},0
-		end,
-		get_speed=function(self)
-			return 300*3.6*(v_dot(velocity,velocity)^0.5)
-		end
-	}
-end
-
 function make_plyr(p,a)
-	local steering_angle,rpm,max_rpm=0,0,0.65
+	local rpm=0
 
-	local body=make_rigidbody(p,a)
-	local skidmarks={
-		make_skidmarks(),
-		make_skidmarks()
-	}
-
-	local add_tireforce=function(self,offset,right,fwd,brake,id,rpm)		
-		-- application point (world space)
-		local pos,slide=v_clone(self.pos),false
-		v_add(pos,m_fwd(self.m),offset)
-		
-		-- point velocity
-		local relv=self:pt_velocity(pos)
-		local relv_len=v_dot(relv,relv)
-		-- avoid noise
-		if relv_len>0.001 then
-			local sa=v_dot(relv,right)/30
-			v_scale(right,-sa)
-			-- slide
-			if abs(sa)>3 then
-				slide=true
-			end
-			self:apply_impulse(right,pos)			
-		end
-
-		if rpm then
-			-- slide (or brake)?
-			if v_dot(relv,fwd)<0.8 then
-				slide=true
-			end
-			v_scale(fwd,rpm)
-			self:apply_force(fwd,pos)
-		end
+	local body=make_car(p,a)
 	
-		if slide==true then
-		 --
-			skidmarks[id]:add(pos)
-		end
-	end
-	
-	body.control=function(self)
+	body.control=function(self)	
 		local da=0
 		if(btn(0)) da=1
 		if(btn(1)) da=-1
 
 		-- accelerate
 		if btn(2) then
-			rpm=min(rpm+0.1,max_rpm)
+			rpm=rpm+0.1
 		end
-		--[[
-		local fwd=m_fwd(self.m)
-		local accelerate=v_clone(fwd)
-		v_scale(accelerate,rpm/12)
-		v_add(fwd,m_right(self.m),0.5)
-		v_add(fwd,self.pos)
-		self:apply_impulse(accelerate,fwd)
-]]
 
-		-- steering angle
-		steering_angle+=da/8
-		local steering=1-0.1*steering_angle
-
-		-- front wheels
-		local c,s=cos(steering),-sin(steering)
-		-- self:draw_vector(m_x_v(self.m,{s,0,c}),self.pos,9)
-		add(debug_vectors,{f=m_x_v(self.m,{c,0,-s}),p=self.pos,c=9})
-		add_tireforce(self,1,m_x_v(self.m,{c,0,-s}),m_x_v(self.m,{s,0,c}),1,1)
-		-- rear wheels
-		add_tireforce(self,-1.2,m_right(self.m),m_fwd(self.m),1,2,rpm)			
-	end	
+		rpm=self:steer(da/8,rpm)
+	end
 	body.update=function(self)
-		steering_angle*=0.8
 		rpm*=0.97		
-
-		--			
-		for _,s in pairs(skidmarks) do
-			s:update()
-		end
 	end
 	-- wrapper
 	return body
@@ -597,8 +473,9 @@ end
 local npcs={}
 local actors={}
 
-function make_npc(p,angle,track)
-	local body=make_rigidbody(p,angle)
+function make_npc(p,angle,track)	
+	local body=make_car(p,angle)
+
 	local body_draw=body.draw
 	body.draw=function(self)
 		local x,y=cam:project(track:get_next())
@@ -607,77 +484,76 @@ function make_npc(p,angle,track)
 		body_draw(self)
 	end
 
-	local angle=0
+	-- return world position p in local space (2d)
+	function inv_apply(self,target)
+		p=make_v(self.pos,target)
+		local x,y,z,m=p[1],p[2],p[3],self.m
+		return {m[1]*x+m[2]*y+m[3]*z,0,m[7]*x+m[8]*y+m[9]*z}
+	end
 
-	body.control_ai=function(self)
+	body.control=function(self)
+		-- lookahead
 		local fwd=m_fwd(self.m)
 		-- force application point
 		local p=v_clone(self.pos)
-		v_add(p,fwd,1)
+		v_add(p,fwd,3)
 
-		-- get target point
-		local target=track:update(p,24)
-		local f=make_v(p,target)
-		v_normz(f)
-		local right=m_right(self.m)
-		local sa=v_dot(right,f)			
-		angle+=sa*0.8
-		v_scale(right,angle)
-		
-		-- steer toward track
-		self:apply_force(right,p)
+		local rpm=0.6
+		-- default: steer to track
+		local target=inv_apply(self,track:update(p,24))
+		local target_angle=atan2(target[1],target[3])
 
-		-- avoid others
-		for _,npc in pairs(actors) do				
-			if npc!=self and v_dist(npc.pos,self.pos)<16 then
-				local f_avoid=v2_ortho(make_v(npc.pos,self.pos),-0.2)
-				self:apply_force(f_avoid,p)			
+		-- avoid collisions
+		local velocity=self.get_velocity()
+		for _,actor in pairs(actors) do
+			if actor!=self then
+				local axis=make_v(actor.pos,self.pos)
+				-- todo: normz and check function?
+				-- in range?
+				if v_len(axis)<16 then
+					local axis_bck=v_clone(axis)
+					v_normz(axis)
+					local relv=make_v(actor.get_velocity(),velocity)					
+					-- separating?
+					local sep=v_dot(axis,relv)
+					if sep<0 then
+						add(debug_vectors,{f=axis_bck,p=self.pos,c=4,scale=sep})
+
+						local local_pos=inv_apply(self,actor.pos)
+						-- in front?
+						-- in path?
+						if local_pos[3]>0 and abs(local_pos[1])<2 then							
+							local x=local_pos[1]
+							local escape_axis=v2_ortho(axis,1)
+							local_pos[1]+=1/v_dot(relv,escape_axis)
+							target_angle=atan2(local_pos[1],local_pos[3])
+							rpm/=2
+
+							add(debug_vectors,{f=make_v(self.pos,self:apply(local_pos)),p=self.pos,c=8,scale=target_angle})
+							break
+						end
+					end
+				end
 			end
 		end
-
-		-- rear wheel
-		p=v_clone(self.pos)
-		v_add(p,fwd,-1.2)
-	
-		local engine=v_clone(fwd)
-		local rpm=1-abs(sa)
-		v_scale(engine,rpm)
-		self:apply_force(engine,p)
-
-		--if(true) return
-
-		-- rear wheel
-		-- point velocity
-		local relv=self:pt_velocity(p)
-		add(debug_vectors,{f=relv,p=p,c=6})
-
-		local relv_len=v_dot(relv,relv)
-		self.relv_len=relv_len
-		-- avoid noise
-		if relv_len>0.001 then
-			local right=m_right(self.m)				
-			local sa=v_dot(relv,right)/10
-			if abs(sa)>0.001 then
-				sa=mid(sa,-0.002,0.002)
-				v_scale(right,-sa)
-				add(debug_vectors,{f=right,p=p,c=5,scale=sa})
-
-				self:apply_impulse(right,p)			
-			end
-		end
-	end
-	body.update=function(self)
-		angle=mid(angle*0.9,-0.01,0.01)
 		
+		-- shortest angle
+		if(target_angle<0.5) target_angle=1-target_angle
+		target_angle=0.75-target_angle
+		self:steer(target_angle,rpm*lerp(1,0.5,min(abs(target_angle)/0.17,1)))
+
 	end
 	return body
 end
 
-function make_ball(p,angle)
+local checkpoints=make_checkpoints(checkpoint_data)
+
+function make_car(p,angle)
 	local velocity,angularv={0,0,0},0
 	local forces,torque={0,0,0},0
 
-	local rpm,max_rpm=0,0.6
+	local is_braking=false
+	local max_rpm=0.6
 	local steering_angle=0
 	local sliding_t=0
 
@@ -704,17 +580,36 @@ function make_ball(p,angle)
 			v_add(p,self.pos)
 			return p
 		end,
+		get_velocity=function() return velocity end,
 		draw=function(self)	
+			color(is_braking==false and 7 or 8)
 			local x0,y0=cam:project(self:apply(v[#v]))
 			for i=1,#v do
 				local x1,y1=cam:project(self:apply(v[i]))
-				line(x0,y0,x1,y1,7)
+				line(x0,y0,x1,y1)
 				x0,y0=x1,y1			
 			end
 
+			-- target in local space
+			--[[
+			local target=make_v(self.pos,checkpoints:get_next())
+			local x,y,z=target[1],target[2],target[3]
+			local m=self.m
+			target={m[1]*x+m[2]*y+m[3]*z,m[4]*x+m[5]*y+m[6]*z,m[7]*x+m[8]*y+m[9]*z}
+			x0,y0=cam:project(checkpoints:get_next())			
+			local target_angle=atan2(target[1],target[3])
+			print(target_angle,x0+3,y0,2)
+			target_angle+=angle
+			target={cos(target_angle),0,sin(target_angle)}
+			v_add(target,self.pos)
+			x0,y0=cam:project(self.pos)
+			local x1,y1=cam:project(target)
+			line(x0,y0,x1,y1,8)
+			]]
+
 		end,		
 		apply_force_and_torque=function(self,f,t)
-			add(debug_vectors,{f=f,p=p,c=11,scale=t})
+			-- add(debug_vectors,{f=f,p=p,c=11,scale=t})
 
 			v_add(forces,f)
 			torque+=t
@@ -744,19 +639,9 @@ function make_ball(p,angle)
 		get_speed=function(self)
 			return 300*3.6*(v_dot(velocity,velocity)^0.5)
 		end,
-		control=function(self)	
-			local da=0
-			if(btn(0)) da=1
-			if(btn(1)) da=-1
-
-			-- accelerate
-			if btn(2) then
-				rpm=min(rpm+0.1,max_rpm)
-			end
-
-			-- steering angle
-			steering_angle+=da/8
-			local steering=1-0.1*steering_angle
+		steer=function(self,steering_dt,rpm)
+			is_braking=rpm<0
+			steering_angle+=mid(steering_dt,-0.1,0.1)
 
 			-- longitudinal slip ratio
 			local right=m_right(self.m)
@@ -781,6 +666,9 @@ function make_ball(p,angle)
 			local fwd=m_fwd(self.m)
 			local effective_rps=30*v_dot(fwd,velocity)/0.2638
 			local rps=30*rpm*2
+			if rps>10 then
+				rpm*=lerp(0.9,1,effective_rps/rps)
+			end
 
 			v_scale(fwd,rpm*sr)			
 
@@ -791,17 +679,17 @@ function make_ball(p,angle)
 				skidmark_emitters[3](self:apply(v[3]))
 				skidmark_emitters[4](self:apply(v[4]))
 			end
+
+			return min(rpm,max_rpm)
 		end,
 		update=function(self)
 			steering_angle*=0.8
-			rpm*=0.97
 		end
 	}	
 end
 
 
-local plyr=make_ball({-28,0,-33},0)
-local checkpoints=make_checkpoints(checkpoint_data)
+local plyr=make_plyr({-28,0,-33},0)
 
 -- only for display
 local static_track=make_track(track_data)
@@ -831,9 +719,9 @@ function _update()
 	end
 
 	for _,npc in pairs(npcs) do
+		npc:control()
 		npc:prepare()
 		npc:integrate()	
-		npc:control_ai()
 		npc:update()
 	end
 
@@ -855,7 +743,7 @@ function _draw()
 		npc:draw()
 	end
 
-	-- draw_debug_vectors()
+	draw_debug_vectors()
 
 	checkpoints:draw()
 
