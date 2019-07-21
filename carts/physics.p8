@@ -712,8 +712,6 @@ function make_ball(p,angle)
 				x0,y0=x1,y1			
 			end
 
-			print(sliding_t,2,8,7)
-
 		end,		
 		apply_force_and_torque=function(self,f,t)
 			add(debug_vectors,{f=f,p=p,c=11,scale=t})
@@ -764,27 +762,34 @@ function make_ball(p,angle)
 			local right=m_right(self.m)
 			local sr=v_dot(right,velocity)
 			local last_sliding_t=sliding_t
+			local full_slide
 			if abs(sr)>0.12 then
 				sliding_t+=1
+				full_slide=true
+				for i=1,#v do
+					skidmark_emitters[i](self:apply(v[i]))
+				end		
 			else
 				-- not sliding
 				sliding_t=0
 			end
-
+			-- max "grip"
 			sr=mid(sr,-0.10,0.10)
 			sr=1-abs(sr)/0.40
 			steering_angle*=sr
 
 			local fwd=m_fwd(self.m)
+			local effective_rps=30*v_dot(fwd,velocity)/0.2638
+			local rps=30*rpm*2
+
 			v_scale(fwd,rpm*sr)			
 
 			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
 
-			-- sliding?
-			if last_sliding_t!=sliding_t then
-				for i=1,#v do
-					skidmark_emitters[i](self:apply(v[i]))
-				end			
+			-- rear wheels sliding?
+			if not full_slide and rps>10 and effective_rps/rps<0.8 then
+				skidmark_emitters[3](self:apply(v[3]))
+				skidmark_emitters[4](self:apply(v[4]))
 			end
 		end,
 		update=function(self)
