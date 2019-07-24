@@ -149,6 +149,8 @@ def export_layer(scale,l):
                 is_dual_sided = mat.game_settings.use_backface_culling==False
                 # colors are encoded as hex figures in Blender!
                 color = mat.name.split('_')[0]
+                if len(color)!=2:
+                    raise Exception('Invalid color name: {} / {}'.format(color, mat.name))
 
             # face flags bit layout:
             # 1: tri/quad
@@ -163,10 +165,11 @@ def export_layer(scale,l):
             vgroup_name = None
             for l in f.loops:
                 vi = l.vert.index
-                fs += "{:02x}".format(vi+1)
+                fs += pack_variant(vi+1)
                 # if v belongs to group -> move face to vertex group
                 v = obdata.vertices[vi]
                 if len(v.groups)>=1:
+                    print(vi)
                     vgroup_name = vgroup_names[v.groups[0].group]
             face_data = {'index': f.index, 'data': fs}
             
@@ -176,7 +179,7 @@ def export_layer(scale,l):
                 vgroup_faces[vgroup_name].append(face_data)
 
         # push face data to buffer (inc. dual sided faces)
-        s += "{:02x}".format(len(faces))
+        s += pack_variant(len(faces))
         for f in faces:
             s += f['data']
             raw_face = bm.faces[f['index']]
@@ -196,7 +199,9 @@ def export_layer(scale,l):
                 s += f['data']
                 raw_face = bm.faces[f['index']]
                 # normal
-                s += "{}{}{}".format(pack_double(raw_face.normal.x), pack_double(raw_face.normal.z), pack_double(raw_face.normal.y))
+                ns = "{}{}{}".format(pack_double(raw_face.normal.x), pack_double(raw_face.normal.z), pack_double(raw_face.normal.y))
+                # print("n:{},{},{}".format(raw_face.normal.x,raw_face.normal.z,raw_face.normal.y))
+                s += ns
     return s
 
 # model data

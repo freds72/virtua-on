@@ -463,7 +463,9 @@ function make_plyr(p,a)
 
 		rpm=self:steer(da/8,rpm)
 	end
+	local body_update=body.update
 	body.update=function(self)
+		body_update(self)
 		rpm*=0.97		
 	end
 	-- wrapper

@@ -206,10 +206,12 @@ function make_cam()
    			-- height
 			self.angle=a
 			-- inverse view matrix
-			m=make_m_from_euler(0.12,a,0)
-			v_add(pos,m_fwd(m),-1.5)
+			m=m_from_q(make_q(v_up,a))
+			v_add(pos,m_fwd(m),-0.1)
+			v_add(pos,v_up,0.2)
+			
 			m_inv(m)
-		   	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
+		 m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
 			self.pos,self.m=pos,m
 		end,
 		project_poly=function(self,p,c)
@@ -272,57 +274,106 @@ function make_cam()
 	}
 end
 
-function make_plyr(p,angle)
+function make_car(p,angle)
 	-- last contact face
 	local oldf
-	-- position
-	local pos,velocity=v_clone(p),0
-	local vangle=0
+
+	local velocity,angularv={0,0,0},0
+	local forces,torque={0,0,0},0
+
+	local is_braking=false
+	local max_rpm=0.6
+	local steering_angle=0
+	local sliding_t=0
+
+	local total_r=0
+
 	return {
-		get_pos=function()
-	 		return pos,angle,m_from_q(make_q(oldf and oldf.n or v_up,angle))
+		pos=v_clone(p),
+		m=make_m_from_euler(0,a,0),
+		get_pos=function(self)
+	 		return self.pos,angle,m_from_q(make_q(oldf and oldf.n or v_up,angle))
 		end,
-		handle_input=function()
-			local dx,dy=0,0
-			if(btn(2)) dx=1
-			if(btn(3)) dx=-1
-			if(btn(0)) dy=-1
-			if(btn(1)) dy=1
-		
-			vangle+=dy
-			-- if(oldf) dx/=8
-			velocity+=0.33*dx
+		-- obj to world space
+		apply=function(self,p)
+			p=m_x_v(self.m,p)
+			v_add(p,self.pos)
+			return p
 		end,
-		update=function(self)
-  			vangle*=0.8
-  			velocity*=0.9
-			-- angle*=0.8
+		get_velocity=function() return velocity end,	
+		apply_force_and_torque=function(self,f,t)
+			-- add(debug_vectors,{f=f,p=p,c=11,scale=t})
 
-			angle+=vangle/512
-			-- angle=mid(angle,-0.08,0.08)
+			v_add(forces,f)
+			torque+=t
+		end,
+		prepare=function(self)
+			-- update velocities
+			v_add(velocity,forces,0.5/30)
+			angularv+=torque*0.5/30
 
-			-- update orientation matrix
-			local m=make_m_from_euler(0,angle,0)
-			-- backup current position
-			local p0=v_clone(pos)
-			v_add(pos,m_fwd(m),velocity/8)
-			v_add(pos,v_up,-0.4)
+			-- apply some damping
+			angularv*=0.86
+			v_scale(velocity,0.97)
+			-- some friction
+			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
+		end,
+		integrate=function(self)
+		 	-- update pos & orientation
+			v_add(self.pos,velocity)
+			-- fix
+			angularv=mid(angularv,-1,1)
+			angle+=angularv			
+			self.m=make_m_from_euler(0,angle,0)
 
-			local f1=find_face(pos,oldf)
-			-- invalid move?
-			if not f1 then
-				-- split until valid
-				for i=4,1,-1 do
-					local p2=v_lerp(p0,pos,i/4)
-					f1=find_face(p2,oldf)
-					if(f1) pos=p2 break
-				end
+			-- reset
+			forces,torque={0,0,0},0
+		end,
+		get_speed=function(self)
+			return 300*3.6*(v_dot(velocity,velocity)^0.5)
+		end,
+		steer=function(self,steering_dt,rpm)
+			is_braking=rpm<0
+			steering_angle+=mid(steering_dt,-0.1,0.1)
+
+			-- longitudinal slip ratio
+			local right=m_right(self.m)
+			local sr=v_dot(right,velocity)
+			local last_sliding_t=sliding_t
+			local full_slide
+			if abs(sr)>0.12 then
+				sliding_t+=1
+				full_slide=true
+			else
+				-- not sliding
+				sliding_t=0
+			end
+			-- max "grip"
+			sr=mid(sr,-0.10,0.10)
+			sr=1-abs(sr)/0.40
+			steering_angle*=sr
+
+			local fwd=m_fwd(self.m)
+			local effective_rps=30*v_dot(fwd,velocity)/0.2638
+			local rps=30*rpm*2
+			if rps>10 then
+				rpm*=lerp(0.9,1,effective_rps/rps)
 			end
 
+			v_scale(fwd,rpm*sr)			
+
+			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
+
+			return min(rpm,max_rpm)
+		end,
+		update=function(self)
+			steering_angle*=0.8
+
 			-- find ground
+			local pos=self.pos			
 			local newf,newpos=find_face(pos,oldf)
 			if newf then		
-				pos[2]=max(pos[2],newpos[2])
+				pos[2]=newpos[2]
 				oldf=newf
 			end
 			-- above 0
@@ -335,18 +386,44 @@ function make_plyr(p,angle)
 				end
 			end
 
-			-- update parts orientations
-			local rpm=-velocity*time()
-			self.rw=make_m_from_euler(rpm,0,0)
-			local wheel_m=make_m_from_euler(rpm,2*angle,0)
+			-- update car parts (orientations)
+			local fwd=m_fwd(self.m)
+			total_r+=v_dot(fwd,velocity)/0.2638
+			self.rw=make_m_from_euler(total_r,0,0)
+			local wheel_m=make_m_from_euler(total_r,-steering_angle/8,0)
 			self.lfw=wheel_m
 			self.rfw=wheel_m
 		end
-	}
+	}	
 end
 
-local dither_pat={0xffff,0x7fff,0x7fdf,0x5fdf,0x5f5f,0x5b5f,0x5b5e,0x5a5e,0x5a5a,0x1a5a,0x1a4a,0x0a4a,0x0a0a,0x020a,0x0208,0x0000}
+function make_plyr(p,angle)
+	local rpm=0
+	local body=make_car(p,angle)
+	
+	-- backup parent methods
+	local body_update=body.update
 
+	body.control=function(self)	
+		local da=0
+		if(btn(0)) da=1
+		if(btn(1)) da=-1
+
+		-- accelerate
+		if btn(2) then
+			rpm=rpm+0.1
+		end
+
+		rpm=self:steer(da/8,rpm)
+	end
+	
+	body.update=function(self)
+		body_update(self)
+		rpm*=0.97		
+	end
+	-- wrapper
+	return body
+end
 
 function is_inside(p,f)
 	local v=track.v
@@ -445,7 +522,7 @@ function play_state()
 			t+=1
 			track:update()
 
-			plyr:handle_input()	
+			plyr:control()	
 		end
 end
 
@@ -497,6 +574,8 @@ function _update()
 	update_state()
 
 	-- todo: update all actors
+	plyr:prepare()
+	plyr:integrate()	
 	plyr:update()
 	
 	if plyr then
@@ -565,7 +644,13 @@ function collect_model_faces(model,m,parts,out)
 			m_x_v(m,a)
 			-- world to cam
 			local ax,ay,az=a[1]+cx,a[2]+cy,a[3]+cz
-			a={cm[1]*ax+cm[5]*ay+cm[9]*az,cm[2]*ax+cm[6]*ay+cm[10]*az,cm[3]*ax+cm[7]*ay+cm[11]*az,outcode=0}
+			ax,az=cm[1]*ax+cm[5]*ay+cm[9]*az,cm[3]*ax+cm[7]*ay+cm[11]*az
+			local outcode=az>z_near and k_far or k_near
+			if ax>az then outcode+=k_right
+			elseif -ax>az then outcode+=k_left
+			end	
+			local a={ax,cm[2]*ax+cm[6]*ay+cm[10]*az,az,outcode=outcode}
+
 			t[k]=a
 			return a
 		end
@@ -670,14 +755,20 @@ function _draw()
 	local pos,angle,m=plyr:get_pos()
 	local cs,ss=cos(angle),-sin(angle)
 	-- draw npc path
-	for i=1,#track.npc_path do
+
+	local function npc_track_project(i)
 		local v=track.npc_path[i]
 		local x,y=v[1]-pos[1],v[3]-pos[3]
-		x,y=cs*x-ss*y,ss*x+cs*y
-		pset(96+0.3*x,64-0.3*y,0x1000)
+		return 96+0.3*(cs*x-ss*y),64-0.3*(ss*x+cs*y)
+	end
+	local x0,y0=npc_track_project(#track.npc_path)
+	for i=1,#track.npc_path do
+		local x1,y1=npc_track_project(i)
+		line(x0,y0,x1,y1,0x1000)
+		x0,y0=x1,y1
 	end
 	circfill(96,64,1,0x8)
-
+ 
 	-- clear vertex cache
 	out={}
 	-- m=make_m_from_euler(0,time()/16,0)
@@ -756,7 +847,9 @@ function unpack_double(scale)
 end
 -- unpack an array of bytes
 function unpack_array(fn)
-	for i=1,unpack_variant() do
+	local n=unpack_variant()
+	printh(n)
+	for i=1,n do
 		fn(i)
 	end
 end
@@ -784,10 +877,13 @@ function unpack_face()
 	f.ni=band(f.flags,2)>0 and 4 or 3
 	-- vertex indices
 	-- quad?
+	s="["
 	for i=1,f.ni do
 		-- using the face itself saves more than 500KB!
 		f[i]=unpack_variant()
+		s=s..f[i]..","
 	end
+	printh(s.."]")
 	return f
 end
 
@@ -838,6 +934,7 @@ function unpack_models()
 	-- for all models
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
+		printh("unpacking: "..name)
 		scale*=0.75
 		unpack_array(function()
 			local d=unpack_double()
@@ -853,12 +950,14 @@ function unpack_models()
 			-- unpack vertex groups (as sub model)
 			unpack_array(function()				
 				local name=unpack_string()
+				printh("vg: "..name)
 				local vgroup={offset=unpack_v(scale),f={}}
 				-- faces
 				unpack_array(function()
 					local f=unpack_face()
 					-- normal
 					f.n=unpack_v()
+					printh(f.n[1].."/"..f.n[2].."/"..f.n[3].."."..f[1])
 					-- viz check
 					f.cp=v_dot(f.n,lod.v[f[1]])
 
@@ -886,13 +985,28 @@ function unpack_track()
 		voxels={},
 		ground={},
 		start_pos=unpack_v(),
+		checkpoints={},
 		npc_path={}}
+
+	-- checkpoints
+	unpack_array(function()
+		add(model.checkpoints,unpack_double())
+		add(model.checkpoints,unpack_double())
+		add(model.checkpoints,unpack_double())
+	end)
+
+	-- npc path
+	unpack_array(function()
+		add(model.npc_path,{unpack_double(),0,unpack_double()})
+	end)
+	
 	-- vertices + faces + normal data
 	unpack_model(model)
 
 	-- voxels: collision and rendering optimization
 	unpack_array(function()
 		local id,faces,solid_faces=unpack_variant(),{},{}
+		printh("voxel: "..id)
 		unpack_array(function()
 			local f=model.f[unpack_variant()]
 			add(faces,f)
@@ -903,10 +1017,6 @@ function unpack_track()
 		model.voxels[id]=faces
 		-- list of ground faces per voxel
 		model.ground[id]=#solid_faces>0 and solid_faces
-	end)
-	-- npc path
-	unpack_array(function()
-		add(model.npc_path,{unpack_double(),0,unpack_double()})
 	end)
 	return model	
 end
@@ -1059,14 +1169,14 @@ __gfx__
 0000000033333333333333330000000009990eee0aa900aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
 0000000033333333333333330000000000000ee0aaa900aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
 00000000333333333333333300000000eeeeee0aaa90ee0aaaaaaaa90e09aaaaaaaaa90000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000eeeee0aaa90eee0a999999a90ee09999999aa90000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000eeee0aaa90eee0aa900000aa90000000000aa90000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000eeee0aa90eeee0aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000eeee0aa90eeee0aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000eeee0aa90eeee0aaaaaaaaaa900aaaaaaaaaa90000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000eeee0aa90eeee0aaaaaaaaa99009aaaaaaaa990000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000eeee09990eeeee09999999990ee09999999990e000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000eeee00000eeeeee000000000eeee000000000ee000000000000000000000000000000000000000000000000000000000
+00000000e0eeee0e0000000000000000eeeee0aaa90eee0a999999a90ee09999999aa90000000000000000000000000000000000000000000000000000000000
+00000000070ee0700000000000000000eeee0aaa90eee0aa900000aa90000000000aa90000000000000000000000000000000000000000000000000000000000
+00000000e07ee70e0000000000000000eeee0aa90eeee0aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
+00000000eeeeeeee0000000000000000eeee0aa90eeee0aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
+00000000eeeeeeee0000000000000000eeee0aa90eeee0aaaaaaaaaa900aaaaaaaaaa90000000000000000000000000000000000000000000000000000000000
+00000000e07ee70e0000000000000000eeee0aa90eeee0aaaaaaaaa99009aaaaaaaa990000000000000000000000000000000000000000000000000000000000
+00000000070ee0700000000000000000eeee09990eeeee09999999990ee09999999990e000000000000000000000000000000000000000000000000000000000
+00000000e0eeee0e0000000000000000eeee00000eeeeee000000000eeee000000000ee000000000000000000000000000000000000000000000000000000000
 __map__
 0303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
