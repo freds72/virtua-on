@@ -6,6 +6,11 @@ function lerp(a,b,t)
 	return a*(1-t)+b*t
 end
 
+function smoothstep(t)
+	t=mid(t,0,1)
+	return t*t*(3-2*t)
+end
+
 function make_v(a,b)
 	return {
 		b[1]-a[1],
@@ -131,6 +136,16 @@ function m_fwd(m)
 	return {m[9],m[10],m[11]}
 end
 
+-- coroutine helper
+function corun(f)
+	local cs=costatus(f)
+	if cs=="suspended" then
+		assert(coresume(f))
+		return f
+	end
+	return nil
+end
+
 -- sort
 -- https://github.com/morgan3d/misc/tree/master/p8sort
 -- 
@@ -194,6 +209,20 @@ local all_models={}
 
 -- camera
 function make_cam()
+	-- views
+	local switching_async
+	-- 0: far
+	-- 1: close
+	-- 2: cockpit
+	local view_mode=0
+	-- view offset/angle
+	local view_pov={
+		{-2.2,1.5,0.1},
+		{-0.7,0.3,0},
+		{-0.01,0.11,0}
+	}
+	local current_pov=v_clone(view_pov[view_mode+1])
+
 	local angles={}
 	for i=0,15 do
 		add(angles,atan2(7.5,i-7.5))
@@ -201,17 +230,34 @@ function make_cam()
 	return {
 		pos={0,0,0},
 		angle=0,
+		update=function(self)
+			if switching_async then
+				switching_async=corun(switching_async)
+			elseif btnp(4) then
+				local next_mode=(view_mode+1)%#view_pov
+				local next_pov=v_clone(view_pov[next_mode+1])
+				switching_async=cocreate(function()
+					for i=0,29 do
+						local t=smoothstep(i/30)
+						current_pov=v_lerp(view_pov[view_mode+1],next_pov,t)
+						yield()
+					end
+					-- avoid drift
+					current_pov,view_mode=next_pov,next_mode
+				end)
+			end
+		end,
 		track=function(self,pos,a,m)
    			pos=v_clone(pos)
    			-- height
 			self.angle=a
 			-- inverse view matrix
 			m=m_from_q(make_q(v_up,a))
-			v_add(pos,m_fwd(m),-0.01)
-			v_add(pos,v_up,0.11)
+			v_add(pos,m_fwd(m),current_pov[1])
+			v_add(pos,v_up,current_pov[2])
 			
 			m_inv(m)
-		 m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
+		 	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
 			self.pos,self.m=pos,m
 		end,
 		project_poly=function(self,p,c)
@@ -393,7 +439,7 @@ function make_car(p,angle)
 			local wheel_m=make_m_from_euler(total_r,-steering_angle/8,0)
 			self.lfw=wheel_m
 			self.rfw=wheel_m
-			self.sw=m_from_q(make_q({0,0.303,0.707},steering_angle))
+			self.sw=m_from_q(make_q({0,0.2144,-0.9767},-steering_angle/2))
 		end
 	}	
 end
@@ -523,6 +569,7 @@ function play_state()
 			t+=1
 			track:update()
 
+			cam:update()
 			plyr:control()	
 		end
 end
@@ -634,6 +681,18 @@ function collect_model_faces(model,m,parts,out)
 	local x,y,z=-cx-m[13],-cy-m[14],-cz-m[15]
 	local cam_pos={m[1]*x+m[2]*y+m[3]*z,m[5]*x+m[6]*y+m[7]*z,m[9]*x+m[10]*y+m[11]*z}
 	
+	-- select lod
+	local d=v_dot(cam_pos,cam_pos)
+	
+	-- lod selection
+	local lodid=0
+	for i=1,#model.lod_dist do
+		if(d>model.lod_dist[i]) lodid+=1
+	end
+	
+	lodid=min(lodid,#model.lods-1)
+	model=model.lods[lodid+1]
+	
 	local v_cache={
 		__index=function(t,k)
 			local a=v_clone(model.v[k])
@@ -676,6 +735,8 @@ function collect_model_faces(model,m,parts,out)
 
 		collect_faces(vgroup.f,vg_cam_pos,p,out)
 	end
+
+	return d,lodid
 end
 
 function draw_polys(polys,v_cache)
@@ -775,20 +836,14 @@ function _draw()
 	-- m=make_m_from_euler(0,time()/16,0)
 	m_set_pos(m,pos)
 	-- car
-	local model=all_models["car"].lods[1]
-	total_faces=#model.f
-	for _,vgroup in pairs(model.vgroups) do
-		total_faces+=#vgroup.f
-	end
-	collect_model_faces(model,m,plyr,out)
+	local d,lodid=collect_model_faces(all_models["car"],m,plyr,out)
  	sort(out)
 	draw_polys(out)
 	
 	draw_state()
-
 	local cpu=flr(1000*stat(1))/10
 	local mem=ceil(stat(0))
-	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces--.."\n"..cam.pos[1].."/"..cam.pos[3]
+	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces.."\nlod:"..lodid.."@"..sqrt(d).."m"--.."\n"..cam.pos[1].."/"..cam.pos[3]
 	printb(cpu,2,2,7,2)
 end
 

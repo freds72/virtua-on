@@ -6,6 +6,7 @@ import math
 import mathutils
 from mathutils import Vector, Matrix
 from collections import defaultdict
+from mathutils.geometry import interpolate_bezier
 
 # bpy.app.debug = True
 
@@ -116,12 +117,51 @@ def find_faces_by_group(bm, obcontext, name):
 
         return [f for f in bm.faces if len(f.verts)==len([v for v in f.verts if v.index in group_verts])]    
 
+# export bezier spline
+# ref: https://gist.github.com/zeffii/5724956
+def get_bezier_points(spline, clean=True):   
+    knots = spline.bezier_points
+
+    if len(knots)<2:
+        return
+
+    # verts per segment
+    r = spline.resolution_u + 1
+
+    # segments in spline
+    segments = len(knots)
+
+    if not spline.use_cyclic_u:
+        segments -= 1
+
+    master_point_list = []
+    for i in range(segments):
+        inext = (i + 1) % len(knots)
+
+        knot1 = knots[i].co
+        handle1 = knots[i].handle_right
+        handle2 = knots[inext].handle_left
+        knot2 = knots[inext].co
+
+        bezier = knot1, handle1, handle2, knot2, r
+        points = interpolate_bezier(*bezier)
+        master_point_list.extend(points)
+
+    # some clean up to remove consecutive doubles, this could be smarter...
+    if clean:
+        old = master_point_list
+        good = [v for i, v in enumerate(old[:-1]) if not old[i] == old[i+1]]
+        good.append(old[-1])
+        return good
+        
+    return master_point_list
+
 def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
     fs = ""
     # default values
     is_dual_sided = False
     color = 0x11
-    verts = [l.vert.index for l in f.loops]
+    verts = [l.vert for l in f.loops]
     if len(verts)>4:
         raise Exception('Face has too many vertices: {}'.format(len(verts)))
     if len(obcontext.material_slots)>0:
@@ -133,10 +173,11 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
 
     # find collision edges
     borders = []
+    border_indices = set()
     if vgroups is not None and f in ground_faces:
         for i in range(len(verts)):
-            e0 = verts[i]
-            e1 = verts[(i+1)%len(verts)]
+            e0 = verts[i].index
+            e1 = verts[(i+1)%len(verts)].index
             # get vertex groups
             if e0 in vgroups and e1 in vgroups:
                 g0 = vgroups[e0]
@@ -145,9 +186,12 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
                 cg = set(g0).intersection(g1)
                 if len(cg)>1:
                     raise Exception('Multiple vertex groups for the same edge ({},{}): {} x {} -> {}'.format(e0,e1,g0,g1,cg))
-                if len(cg)==1:
-                    vi = verts.index(e0)
+                if len(cg)==1:            
+                    border_indices.add(e0)
+                    border_indices.add(e1)
+                    vi = [v.index for v in verts].index(e0)
                     borders.append(vi)
+
     if len(borders)>2:
         raise Exception('Face: {} has too many collision borders: {}/2'.format(f.index, len(borders)))
     
@@ -169,8 +213,8 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
     fs += "{:02x}".format(color)
 
     # + vertex id (= edge loop)
-    for vi in verts:        
-        fs += pack_variant(vi+1)
+    for v in verts:        
+        fs += pack_variant(v.index+1)
 
     # inner faces?
     if has_inner_faces:
@@ -185,6 +229,23 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
            (borders[1]<<4 if len(borders)>1 else 0)
         )
 
+    # corners?
+
+    # print("face: {} borders: {}".format(f.index, border_indices))
+# 
+    # if vgroups is not None:
+    #     # all single "border" vertices
+    #     # TODO: select only faces with a *single* contact point for a given border
+    #     pverts = [v for v in verts if v.index not in border_indices and v.index in vgroups]
+    #     corners = []
+    #     for v in pverts:
+    #         # select all vertices connected to current vertex
+    #         # including only border vertices
+    #         # excluding current face vertices            
+    #         corner_edges = [ev for ev in [e.other_vert(v) for e in v.link_edges] if ev not in verts and ev.index in vgroups]
+    #         if len(corner_edges)>0:
+    #             print("face: {} borders: {} corners: {}".format(f.index, border_indices, [ee.index for ee in corner_edges]))
+    #             # todo: register corner + borders
     return fs
 
 def export_object(obcontext):
@@ -207,6 +268,7 @@ def export_object(obcontext):
 
     # all border vertices
     vgroups = {v.index: [vgroup_names[g.group] for g in v.groups if vgroup_names[g.group] in ["BORDER1","BORDER2","BORDER3"]] for v in ground_vertices}
+    vgroups = {k: v for k, v in vgroups.items() if len(v)>0}
 
     # vertices
     lens = pack_variant(len(obdata.vertices))
@@ -296,7 +358,7 @@ def export_object(obcontext):
         s += pack_variant(k)
         # number of faces
         if len(v)>255:
-            raise Exception('Voxel: {}/{} has too many faces: {}'.format(voxel%32,round(k/32,0),len(v)))
+            raise Exception('Voxel: {}/{} has too many faces: {}'.format(k%32,round(k/32,0),len(v)))
         s += pack_variant(len(v))
         # face indices
         for i in v:
@@ -304,25 +366,55 @@ def export_object(obcontext):
 
     return s
 
-# model data
-s = ""
+# export a spline (2d)
+def export_spline(spline):    
+    spline_points = get_bezier_points(spline)
+    s = pack_variant(len(spline_points))
+    # 2d export
+    # get world coords
+    mat = obcontext.matrix_world
+    for v in spline_points:
+        loc = mat * v
+        print("{:.4f},{:.4f}".format(loc.x,loc.y))
+        s += "{}{}".format(pack_double(loc.x), pack_double(loc.y))
+    return s
+
+def export_checkpoints():
+    # max. 9 checkpoints
+    checkpoints = []
+    for i in range(1,10):
+        checkpoint_name = 'checkpoint_{}'.format(i)
+        if checkpoint_name in scene.objects:
+            checkpoint = scene.objects[checkpoint_name]
+            # 2d position + radius
+            print("{:.4f},{:.4f},{:.4f}".format(checkpoint.location.x,checkpoint.location.y,checkpoint.empty_draw_size))
+            checkpoints.append("{}{}{}".format(pack_double(checkpoint.location.x), pack_double(checkpoint.location.y),pack_double(checkpoint.empty_draw_size)))
+    s = pack_variant(len(checkpoints))
+    for data in checkpoints:
+        s += data
+    return s
+
+# ---------------------------------------------------------
+# main
+track_data = ""
+
+# export start position
+# note: direction is always fwd
+plyr = [o for o in scene.objects if o.name == 'plyr'][0]
+track_data += "{}{}{}".format(pack_double(plyr.location.x), pack_double(plyr.location.z), pack_double(plyr.location.y))
+
+# export checkpoints
+track_data += export_checkpoints()
+
+# export npc track
+obcontext = [o for o in scene.objects if o.name=='ai_path'][0]
+spline = obcontext.data.splines[0]
+track_data += export_spline(spline)
 
 # select first mesh object
-obcontext = [o for o in scene.objects if o.type == 'MESH' and o.layers[0]][0]
+obcontext = [o for o in scene.objects if o.name == 'track'][0]
+track_data += export_object(obcontext)
 
-# object name
-name = obcontext.name.lower()
-s = s + "{:02x}".format(len(name))
-for c in name:
-    s = s + "{:02x}".format(charset.index(c)+1)
-
-# scale (custom scene property)
-model_scale = scene.get("scale", 1)
-s = s + "{:02x}".format(model_scale)
-
-s = s + export_object(obcontext)
-
-#
 with open(args.out, 'w') as f:
-    f.write(s)
+    f.write(track_data)
 

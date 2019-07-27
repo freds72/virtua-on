@@ -169,7 +169,6 @@ def export_layer(scale,l):
                 # if v belongs to group -> move face to vertex group
                 v = obdata.vertices[vi]
                 if len(v.groups)>=1:
-                    print(vi)
                     vgroup_name = vgroup_names[v.groups[0].group]
             face_data = {'index': f.index, 'data': fs}
             
