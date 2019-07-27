@@ -207,8 +207,8 @@ function make_cam()
 			self.angle=a
 			-- inverse view matrix
 			m=m_from_q(make_q(v_up,a))
-			v_add(pos,m_fwd(m),-0.1)
-			v_add(pos,v_up,0.2)
+			v_add(pos,m_fwd(m),-0.01)
+			v_add(pos,v_up,0.11)
 			
 			m_inv(m)
 		 m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
@@ -393,6 +393,7 @@ function make_car(p,angle)
 			local wheel_m=make_m_from_euler(total_r,-steering_angle/8,0)
 			self.lfw=wheel_m
 			self.rfw=wheel_m
+			self.sw=m_from_q(make_q({0,0.303,0.707},steering_angle))
 		end
 	}	
 end
