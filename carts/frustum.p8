@@ -34,6 +34,16 @@ function v_add(v,dv,scale)
 	v[2]+=scale*dv[2]
 	v[3]+=scale*dv[3]
 end
+-- safe vector length
+function v_len(v)
+	local x,y,z=v[1],v[2],v[3]
+	local d=max(max(abs(x),abs(y)),abs(z))
+	if(d<0.001) return 0
+	x/=d
+	y/=d
+	z/=d
+	return d*(x*x+y*y+z*z)^0.5
+end
 function v_normz(v)
 	local d=v_dot(v,v)
 	if d>0.001 then
@@ -553,21 +563,62 @@ function start_state()
 end
 
 function play_state()
-	local ttl,t=30*30,0
+	-- active index
+	local checkpoint,segments=0,track.checkpoints
+	local n=#segments/3
+	-- active index
+	local checkpoint=0
+	local function to_v(i)
+		return {segments[3*i+1],0,segments[3*i+2]},segments[3*i+3]
+	end
+
+	-- previous laps
+	local laps={}
+
+	-- remaining time before game over (+ some buffer time)
+	local lap_t,remaining_t,best_t,best_i=0,30*30,32000,1
+	
 	return
 		-- draw
 		function()
-			printb("lap time\n"..time_tostr(t),90,2,7,0)
-			printb("time",52,2,7,0)
-			printxl(tostr(flr(ttl/30)),64,9)
+			printb("lap time",90,2,7,0)
+			printb("time",56,2,7,0)
+			printxl(tostr(ceil(remaining_t/30)),64,9)
+			
+			local y=9
+			for i=1,#laps do
+				printb(i,90,y,9,0)
+				printb(laps[i],98,y,best_i==i and 9 or 7,0)
+				y+=7
+			end
+			printb(#laps+1,90,y,9,0)
+			printb(time_tostr(lap_t),98,y,7,0)
 		end,
 		-- update
 		function()
-			ttl-=1
-			if(ttl==1) next_state(gameover_state)
-			
-			t+=1
-			track:update()
+			remaining_t-=1
+			if remaining_t==0 then
+				next_state(gameover_state)
+				return
+			end
+			lap_t+=1
+			local p,r=to_v(checkpoint)
+			if v_len(make_v(plyr.pos,p))<r then
+				checkpoint+=1
+				remaining_t+=30*30
+				-- closed lap?
+				if checkpoint%n==0 then
+					checkpoint=0
+					-- record time
+					add(laps,time_tostr(lap_t))
+					if(lap_t<best_t) then
+						best_t=lap_t
+						best_i=#laps						
+					end
+					-- next lap
+					lap_t=0
+				end
+			end
 
 			cam:update()
 			plyr:control()	
@@ -601,8 +652,6 @@ function _init()
 	reload(0,0,0x4300,"track_0.p8")
 	track=unpack_track()
 	track.reset=function()
-	end
-	track.update=function()
 	end
 	-- 3d models cart
 	reload(0,0,0x4300,"track_models.p8")
@@ -1046,8 +1095,10 @@ function unpack_track()
 
 	-- checkpoints
 	unpack_array(function()
+		-- coords
 		add(model.checkpoints,unpack_double())
 		add(model.checkpoints,unpack_double())
+		-- radius
 		add(model.checkpoints,unpack_double())
 	end)
 
