@@ -623,7 +623,7 @@ function make_car(p,angle)
 
 			-- apply some damping
 			angularv*=0.86
-			v_scale(velocity,0.97)
+			v_scale(velocity,lerp(0.97,0.8,min(sliding_t,30)/30))
 			-- some friction
 			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
 		end,
@@ -674,7 +674,7 @@ function make_car(p,angle)
 
 			v_scale(fwd,rpm*sr)			
 
-			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.1,rpm/max_rpm))
+			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
 
 			-- rear wheels sliding?
 			if not full_slide and rps>10 and effective_rps/rps<0.8 then
