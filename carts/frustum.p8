@@ -222,6 +222,12 @@ end
 local track,plyr,cam
 local all_models={}
 
+local sessionid=0
+local k_far,k_near=0,2
+local k_right,k_left=4,8
+local z_near=0.05
+local current_face
+
 -- camera
 function make_cam()
 	-- views
@@ -337,6 +343,7 @@ end
 
 function make_skidmarks()
 	local t,skidmarks=0,{}
+	local width=0.01
 	return {
 		make_emitter=function()
 			local emit_t,start_pos,oldf=0
@@ -346,8 +353,7 @@ function make_skidmarks()
 					start_pos,oldf=nil,nil
 				end
 				if not start_pos then
-					start_pos=v_clone(pos)
-					oldf=newf
+					start_pos,oldf=v_clone(pos),newf
 				end
 				-- next expected update
 				emit_t=t+1
@@ -356,12 +362,14 @@ function make_skidmarks()
 					local fwd=make_v(start_pos,pos)
 					v_normz(fwd)
 					local right=v_cross(fwd,oldf.n)
+					-- skidmarks corners
 					local a,b,c,d=v_clone(pos),v_clone(pos),v_clone(start_pos),v_clone(start_pos)
-					v_add(a,right,-0.1)
-					v_add(b,right,0.1)
-					v_add(c,right,0.1)
-					v_add(d,right,-0.1)
-					add(skidmarks,{a,b,c,d,0})
+					v_add(a,right,-width)
+					v_add(b,right,width)
+					v_add(c,right,width)
+					v_add(d,right,-width)
+					oldf.skidmarks=oldf.skidmarks or {}
+					add(oldf.skidmarks,add(skidmarks,{a,b,c,d,ttl=0,f=oldf}))
 					start_pos,oldf=v_clone(pos),newf
 				end
 			end
@@ -369,43 +377,20 @@ function make_skidmarks()
 		update=function(self)
 			t+=1
 			for s in all(skidmarks) do
-				s[5]+=1
-				if(s[5]>60) del(skidmarks,s)
-			end
-		end,
-		draw=function(self)
-			local p,m={},cam.m
-			local cx,cy,cz=m[13],m[14],m[15]			
-			for _,skids in pairs(skidmarks) do
-				local verts,outcode,is_clipped={},0xffff,0
-				for i=1,4 do
-					-- world to cam
-					local v=skids[i]
-					local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
-					local ax,az=m[1]*x+m[5]*y+m[9]*z,m[3]*x+m[7]*y+m[11]*z
-					local aout=az>z_near and k_far or k_near
-					if ax>az then aout+=k_right
-					elseif -ax>az then aout+=k_left
-					end
-					-- behind near plane?
-					is_clipped+=band(aout,2)
-					outcode=band(outcode,aout)
-					verts[i]={ax,m[2]*x+m[6]*y+m[10]*z,az}
+				s.ttl+=1
+				if s.ttl>60 then
+					del(skidmarks,s)
+					del(s.f.skidmarks,s)
+					-- clear empty tables
+					if(#s.f.skidmarks==0) s.f.skidmarks=nil
 				end
-				if outcode==0 then
-					 -- mix of near+far vertices?
-					 if(is_clipped>0) verts=z_poly_clip(z_near,verts)
-					 if #verts>2 then
-						cam:project_poly(verts,0)
-					 end
-				 end
 			end
 		end
 	}
 end
 local skidmarks=make_skidmarks()
 
-function make_car(p,angle)
+function make_car(model,p,angle)
 	-- last contact face
 	local oldf
 
@@ -419,22 +404,34 @@ function make_car(p,angle)
 
 	local total_r=0
 	
-	local skidmark_emitters={
+	-- front wheels
+	local front_emitters={
 		lfw=skidmarks:make_emitter(),
 		rfw=skidmarks:make_emitter()
 	}
+	-- rear wheels
+	local rear_emitters={
+		rrw=skidmarks:make_emitter(),
+		lrw=skidmarks:make_emitter()
+	}
+
+	local do_skidmarks=function(self,emitters)
+		for k,emitter in pairs(emitters) do
+			-- world position
+			local vgroup_offset=model.vgroups[k].offset
+			local ground_pos=m_x_v(self.m,vgroup_offset)
+			v_add(ground_pos,self.pos)
+			-- stick to ground
+			v_add(ground_pos,oldf.n,-vgroup_offset[2])
+			emitter(ground_pos,oldf)
+		end
+	end
 
 	return {
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
 		get_pos=function(self)
 	 		return self.pos,angle,m_from_q(make_q(oldf and oldf.n or v_up,angle))
-		end,
-		-- obj to world space
-		apply=function(self,p)
-			p=m_x_v(self.m,p)
-			v_add(p,self.pos)
-			return p
 		end,
 		get_velocity=function() return velocity end,	
 		apply_force_and_torque=function(self,f,t)
@@ -480,13 +477,8 @@ function make_car(p,angle)
 			if abs(sr)>0.12 then
 				sliding_t+=1
 				full_slide=true
-				for k,emitter in pairs(skidmark_emitters) do
-					-- world position
-					local ground_pos=self:apply(model.vgroups[k])
-					-- stick to ground
-					v_add(ground_pos,oldf.n,-model.vgroups[k][2])
-					emitter(ground_pos)
-				end	
+				do_skidmarks(self,front_emitters)
+				do_skidmarks(self,rear_emitters)
 			else
 				-- not sliding
 				sliding_t=0
@@ -509,8 +501,7 @@ function make_car(p,angle)
 
 			-- rear wheels sliding?
 			if not full_slide and rps>10 and effective_rps/rps<0.6 then
-				--skidmark_emitters[3](self:apply(v[3]))
-				--skidmark_emitters[4](self:apply(v[4]))
+				do_skidmarks(self,rear_emitters)
 			end
 
 			return min(rpm,max_rpm)
@@ -538,8 +529,10 @@ function make_car(p,angle)
 			-- update car parts (orientations)
 			local fwd=m_fwd(self.m)
 			total_r+=v_dot(fwd,velocity)/0.2638
-			self.rw=make_m_from_euler(total_r,0,0)
-			local wheel_m=make_m_from_euler(total_r,-steering_angle/8,0)
+			local wheel_m=make_m_from_euler(total_r,0,0)
+			self.rrw=wheel_m
+			self.lrw=wheel_m
+			wheel_m=make_m_from_euler(total_r,-steering_angle/8,0)
 			self.lfw=wheel_m
 			self.rfw=wheel_m
 			self.sw=m_from_q(make_q({0,0.2144,-0.9767},-steering_angle/2))
@@ -549,7 +542,7 @@ end
 
 function make_plyr(p,angle)
 	local rpm=0
-	local body=make_car(p,angle)
+	local body=make_car(all_models["car"].lods[2],p,angle)
 	
 	-- backup parent methods
 	local body_update=body.update
@@ -775,11 +768,6 @@ function _update()
 	skidmarks:update()
 end
 
-local sessionid=0
-local k_far,k_near=0,2
-local k_right,k_left=4,8
-local z_near=0.05
-local current_face
 
 function collect_faces(faces,cam_pos,v_cache,out,dist)
 	local n=#out+1
@@ -882,25 +870,55 @@ function collect_model_faces(model,m,parts,out)
 	return d,lodid
 end
 
-function draw_polys(polys,v_cache)
+function draw_faces(faces,v_cache)
 	-- all poly are encoded with 2 colors
-	for i=1,#polys do
-		local d=polys[i]
+	for i=1,#faces do
+		local d=faces[i]
 		cam:project_poly(d.v,d.f.c)
 		-- details?
-		if d.f.inner and d.key>0.0200 then -- d.dist<2 then					
-			for _,face in pairs(d.f.inner) do
-				local verts,outcode,is_clipped={},0xffff,0
-				for ki=1,face.ni do
-					local a=v_cache[face[ki]]
-					outcode=band(outcode,a.outcode)
-					-- behind near plane?
-					is_clipped+=band(a.outcode,2)
-					verts[ki]=a
+		if d.key>0.0200 then
+			-- face details
+			if d.f.inner then -- d.dist<2 then					
+				for _,face in pairs(d.f.inner) do
+					local verts,outcode,is_clipped={},0xffff,0
+					for ki=1,face.ni do
+						local a=v_cache[face[ki]]
+						outcode=band(outcode,a.outcode)
+						-- behind near plane?
+						is_clipped+=band(a.outcode,2)
+						verts[ki]=a
+					end
+					if outcode==0 then
+						if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+						if(#verts>2) cam:project_poly(verts,face.c)
+					end
 				end
-				if outcode==0 then
-					if(is_clipped>0) verts=z_poly_clip(z_near,verts)
-					if(#verts>2) cam:project_poly(verts,face.c)
+			end
+			-- face skidmarks
+			if d.f.skidmarks then
+				local p,m={},cam.m
+				local cx,cy,cz=m[13],m[14],m[15]			
+				for _,skids in pairs(d.f.skidmarks) do
+					local verts,outcode,is_clipped={},0xffff,0
+					for i=1,4 do
+						-- world to cam
+						local v=skids[i]
+						local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
+						local ax,az=m[1]*x+m[5]*y+m[9]*z,m[3]*x+m[7]*y+m[11]*z
+						local aout=az>z_near and k_far or k_near
+						if ax>az then aout+=k_right
+						elseif -ax>az then aout+=k_left
+						end
+						-- behind near plane?
+						is_clipped+=band(aout,2)
+						outcode=band(outcode,aout)
+						verts[i]={ax,m[2]*x+m[6]*y+m[10]*z,az}
+					end
+					if outcode==0 then
+						-- mix of near+far vertices?
+						if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+						if(#verts>2) cam:project_poly(verts,0)
+					end
 				end
 			end
 		end
@@ -955,11 +973,8 @@ function _draw()
 	-- track
 
  	sort(out)
-	draw_polys(out,p)
+	draw_faces(out,p)
 
-	-- skidmarks
-	skidmarks:draw()
-	
 	local pos,angle,m=plyr:get_pos()
 	local cs,ss=cos(angle),-sin(angle)
 	-- draw npc path
@@ -984,7 +999,7 @@ function _draw()
 	-- car
 	local d,lodid=collect_model_faces(all_models["car"],m,plyr,out)
  	sort(out)
-	draw_polys(out)
+	draw_faces(out)
 	
 	draw_state()
 	local cpu=flr(1000*stat(1))/10
