@@ -51,6 +51,11 @@ function v_lerp(a,b,t)
 		lerp(a[3],b[3],t)
 	}
 end
+function v_cross(a,b)
+	local ax,ay,az=a[1],a[2],a[3]
+	local bx,by,bz=b[1],b[2],b[3]
+	return {ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx}
+end
 
 local v_up={0,1,0}
 
@@ -94,7 +99,7 @@ end
 -- matrix functions
 function m_x_v(m,v)
 	local x,y,z=v[1],v[2],v[3]
-	v[1],v[2],v[3]=m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]
+	return {m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]}
 end
 function m_clone(m)
 	local c={}
@@ -320,6 +325,76 @@ function make_cam()
 	}
 end
 
+function make_skidmarks()
+	local t,skidmarks=0,{}
+	return {
+		make_emitter=function()
+			local emit_t,start_pos,oldf=0
+			return function(pos,newf)
+				-- broken skidmark?
+				if emit_t!=t then
+					start_pos,oldf=nil,nil
+				end
+				if not start_pos then
+					start_pos=v_clone(pos)
+					oldf=newf
+				end
+				-- next expected update
+				emit_t=t+1
+				-- find face
+				if emit_t%10==0 or oldf!=newf then
+					local fwd=make_v(start_pos,pos)
+					v_normz(fwd)
+					local right=v_cross(fwd,oldf.n)
+					local a,b,c,d=v_clone(pos),v_clone(pos),v_clone(start_pos),v_clone(start_pos)
+					v_add(a,right,-0.1)
+					v_add(b,right,0.1)
+					v_add(c,right,0.1)
+					v_add(d,right,-0.1)
+					add(skidmarks,{a,b,c,d,0})
+					start_pos,oldf=v_clone(pos),newf
+				end
+			end
+		end,
+		update=function(self)
+			t+=1
+			for s in all(skidmarks) do
+				s[5]+=1
+				if(s[5]>60) del(skidmarks,s)
+			end
+		end,
+		draw=function(self)
+			local p,m={},cam.m
+			local cx,cy,cz=m[13],m[14],m[15]			
+			for _,skids in pairs(skidmarks) do
+				local verts,outcode,is_clipped={},0xffff,0
+				for i=1,4 do
+					-- world to cam
+					local v=skids[i]
+					local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
+					local ax,az=m[1]*x+m[5]*y+m[9]*z,m[3]*x+m[7]*y+m[11]*z
+					local aout=az>z_near and k_far or k_near
+					if ax>az then aout+=k_right
+					elseif -ax>az then aout+=k_left
+					end
+					-- behind near plane?
+					is_clipped+=band(aout,2)
+					outcode=band(outcode,aout)
+					verts[i]={ax,m[2]*x+m[6]*y+m[10]*z,az}
+				end
+				if outcode==0 then
+					 -- mix of near+far vertices?
+					 if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+					 if #verts>2 then
+						cam:project_poly(verts,0)
+					 end
+				 end
+			end
+		end
+	}
+end
+local skidmarks=make_skidmarks()
+
 function make_car(p,angle)
 	-- last contact face
 	local oldf
@@ -333,6 +408,11 @@ function make_car(p,angle)
 	local sliding_t=0
 
 	local total_r=0
+	
+	local skidmark_emitters={
+		lfw=skidmarks:make_emitter(),
+		rfw=skidmarks:make_emitter()
+	}
 
 	return {
 		pos=v_clone(p),
@@ -390,6 +470,13 @@ function make_car(p,angle)
 			if abs(sr)>0.12 then
 				sliding_t+=1
 				full_slide=true
+				for k,emitter in pairs(skidmark_emitters) do
+					-- world position
+					local ground_pos=self:apply(model.vgroups[k])
+					-- stick to ground
+					v_add(ground_pos,oldf.n,-model.vgroups[k][2])
+					emitter(ground_pos)
+				end	
 			else
 				-- not sliding
 				sliding_t=0
@@ -409,6 +496,12 @@ function make_car(p,angle)
 			v_scale(fwd,rpm*sr)			
 
 			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
+
+			-- rear wheels sliding?
+			if not full_slide and rps>10 and effective_rps/rps<0.6 then
+				--skidmark_emitters[3](self:apply(v[3]))
+				--skidmark_emitters[4](self:apply(v[4]))
+			end
 
 			return min(rpm,max_rpm)
 		end,
@@ -628,6 +721,8 @@ function _update()
 	if plyr then
 		cam:track(plyr:get_pos())
 	end
+
+	skidmarks:update()
 end
 
 local sessionid=0
@@ -682,13 +777,13 @@ function collect_model_faces(model,m,parts,out)
 	
 	local v_cache={
 		__index=function(t,k)
-			local a=v_clone(model.v[k])
+			local a=model.v[k]
 			-- relative to vgroup
 			if vgm then
-				m_x_v(vgm,a)
+				a=m_x_v(vgm,a)
 			end
 			-- relative to world
-			m_x_v(m,a)
+			a=m_x_v(m,a)
 			-- world to cam
 			local ax,ay,az=a[1]+cx,a[2]+cy,a[3]+cz
 			ax,az=cm[1]*ax+cm[5]*ay+cm[9]*az,cm[3]*ax+cm[7]*ay+cm[11]*az
@@ -709,8 +804,7 @@ function collect_model_faces(model,m,parts,out)
 	local m_orig=m_clone(m) 
 	for name,vgroup in pairs(model.vgroups) do
 		-- get world group position
-		local pos=v_clone(vgroup.offset)
-		m_x_v(m_orig,pos)		
+		local pos=m_x_v(m_orig,vgroup.offset)		
 		m_set_pos(m,pos)
 		
 		-- lookup vertex group orientation from parts
@@ -799,6 +893,9 @@ function _draw()
  	sort(out)
 	draw_polys(out,p)
 
+	-- skidmarks
+	skidmarks:draw()
+	
 	local pos,angle,m=plyr:get_pos()
 	local cs,ss=cos(angle),-sin(angle)
 	-- draw npc path
