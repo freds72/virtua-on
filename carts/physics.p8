@@ -623,7 +623,7 @@ function make_car(p,angle)
 
 			-- apply some damping
 			angularv*=0.86
-			v_scale(velocity,0.97)
+			v_scale(velocity,lerp(0.97,0.8,min(sliding_t,30)/30))
 			-- some friction
 			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
 		end,
