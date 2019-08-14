@@ -66,6 +66,10 @@ function v_cross(a,b)
 	local bx,by,bz=b[1],b[2],b[3]
 	return {ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx}
 end
+-- x/z orthogonal vector
+function v2_ortho(a,scale)
+	return {-scale*a[1],0,scale*a[3]}
+end
 
 local v_up={0,1,0}
 
@@ -221,12 +225,20 @@ end
 -- global vars
 local track,plyr,cam
 local all_models={}
+local npcs={}
+local actors={}
 
 local sessionid=0
 local k_far,k_near=0,2
 local k_right,k_left=4,8
 local z_near=0.05
 local current_face
+
+-- voxel helpers
+function to_tile_coords(v)
+	local x,y=shr(v[1],3)+16,shr(v[3],3)+16
+	return flr(x),flr(y),x,y
+end
 
 -- camera
 function make_cam()
@@ -244,6 +256,7 @@ function make_cam()
 	}
 	local current_pov=v_clone(view_pov[view_mode+1])
 
+	-- raycasting constants
 	local angles={}
 	for i=0,15 do
 		add(angles,atan2(7.5,i-7.5))
@@ -295,9 +308,8 @@ function make_cam()
 			end
 		end,
 		visible_tiles=function(self)
-  			local x,y=shr(self.pos[1],3)+16,shr(self.pos[3],3)+16
-   			local x0,y0=flr(x),flr(y)
-   			local tiles={[x0+shl(y0,5)]=0} 
+			local x0,y0,x,y=to_tile_coords(self.pos)
+			local tiles={[x0+shl(y0,5)]=0} 
    
    			for i=1,16 do   	
 				local a=angles[i]+self.angle
@@ -305,10 +317,10 @@ function make_cam()
 				
 				local mapx,mapy=x0,y0
 			
-				local ddx,ddy=abs(1/u),abs(1/v)
+				local ddx,ddy=1/u,1/v
 				local mapdx,distx
 				if u<0 then
-					mapdx=-1
+					mapdx,ddx=-1,-ddx
 					distx=(x-mapx)*ddx
 				else
 					mapdx=1
@@ -316,7 +328,7 @@ function make_cam()
 				end
 				local mapdy,disty
 				if v<0 then
-					mapdy=-1
+					mapdy,ddy=-1,-ddy
 					disty=(y-mapy)*ddy
 				else
 					mapdy=1
@@ -332,7 +344,7 @@ function make_cam()
 					end
 					-- non solid visible tiles
 					if band(bor(mapx,mapy),0xffe0)==0 then
-						tiles[mapx+32*mapy]=dist
+						tiles[mapx+shl(mapy,5)]=dist
 					end
 				end				
 			end	
@@ -347,10 +359,11 @@ function make_skidmarks()
 	return {
 		make_emitter=function()
 			local emit_t,start_pos,oldf=0
+			local current_right,current_skidmarks
 			return function(pos,newf)
 				-- broken skidmark?
 				if emit_t!=t then
-					start_pos,oldf=nil,nil
+					start_pos,oldf,current_right,current_skidmarks=nil
 				end
 				if not start_pos then
 					start_pos,oldf=v_clone(pos),newf
@@ -361,17 +374,23 @@ function make_skidmarks()
 				if emit_t%10==0 or oldf!=newf then
 					local fwd=make_v(start_pos,pos)
 					v_normz(fwd)
-					local right=v_cross(fwd,oldf.n)
+					current_right=v_cross(fwd,oldf.n)
 					-- skidmarks corners
 					local a,b,c,d=v_clone(pos),v_clone(pos),v_clone(start_pos),v_clone(start_pos)
-					v_add(a,right,-width)
-					v_add(b,right,width)
-					v_add(c,right,width)
-					v_add(d,right,-width)
+					v_add(a,current_right,-width)
+					v_add(b,current_right,width)
+					v_add(c,current_right,width)
+					v_add(d,current_right,-width)
 					oldf.skidmarks=oldf.skidmarks or {}
-					add(oldf.skidmarks,add(skidmarks,{a,b,c,d,ttl=0,f=oldf}))
+					current_skidmarks=add(oldf.skidmarks,add(skidmarks,{a,b,c,d,ttl=0,f=oldf}))
 					start_pos,oldf=v_clone(pos),newf
-				end
+				elseif current_right then
+					local a,b=v_clone(pos),v_clone(pos)
+					v_add(a,current_right,width)
+					v_add(b,current_right,-width)
+					current_skidmarks[1]=a
+					current_skidmarks[2]=b
+				end 
 			end
 		end,
 		update=function(self)
@@ -416,6 +435,7 @@ function make_car(model,p,angle)
 	}
 
 	local do_skidmarks=function(self,emitters)
+		if(self!=plyr) return
 		for k,emitter in pairs(emitters) do
 			-- world position
 			local vgroup_offset=model.vgroups[k].offset
@@ -547,6 +567,7 @@ function make_plyr(p,angle)
 	-- backup parent methods
 	local body_update=body.update
 
+	body.model=all_models["car"]
 	body.control=function(self)	
 		local da=0
 		if(btn(0)) da=1
@@ -563,6 +584,95 @@ function make_plyr(p,angle)
 	body.update=function(self)
 		body_update(self)
 		rpm*=0.97		
+	end
+	-- wrapper
+	return body
+end
+
+function make_track(segments)
+	local n=#segments
+	-- active index
+	local checkpoint=0
+	local function to_v(i)
+		return segments[i+1]
+	end
+	return {	
+		-- returns next location
+		get_next=function(self)
+			return to_v(checkpoint)
+		end,
+		update=function(self,pos,dist)
+			local p=to_v(checkpoint)
+			if v_len(make_v(pos,p))<dist then
+				checkpoint+=1
+				checkpoint%=n
+			end
+			return to_v(checkpoint)
+		end
+	}
+end
+
+function make_npc(p,angle,track)	
+	local body=make_car(all_models["car"].lods[2],p,angle)
+
+	-- return world position p in local space (2d)
+	function inv_apply(self,target)
+		p=make_v(self.pos,target)
+		local x,y,z,m=p[1],p[2],p[3],self.m
+		return {m[1]*x+m[2]*y+m[3]*z,0,m[7]*x+m[8]*y+m[9]*z}
+	end
+
+	-- todo: switch to npc car model
+	body.model=all_models["car"]
+
+	body.control=function(self)
+		-- lookahead
+		local fwd=m_fwd(self.m)
+		-- force application point
+		local p=v_clone(self.pos)
+		v_add(p,fwd,3)
+
+		local rpm=0.6
+		-- default: steer to track
+		local target=inv_apply(self,track:update(p,24))
+		local target_angle=atan2(target[1],target[3])
+
+		-- avoid collisions
+		local velocity=self.get_velocity()
+		for _,actor in pairs(actors) do
+			if actor!=self then
+				local axis=make_v(actor.pos,self.pos)
+				-- todo: normz and check function?
+				-- in range?
+				if v_len(axis)<16 then
+					local axis_bck=v_clone(axis)
+					v_normz(axis)
+					local relv=make_v(actor.get_velocity(),velocity)					
+					-- separating?
+					local sep=v_dot(axis,relv)
+					if sep<0 then
+						
+						local local_pos=inv_apply(self,actor.pos)
+						-- in front?
+						-- in path?
+						if local_pos[3]>0 and abs(local_pos[1])<2 then							
+							local x=local_pos[1]
+							local escape_axis=v2_ortho(axis,1)
+							local_pos[1]+=1/v_dot(relv,escape_axis)
+							target_angle=atan2(local_pos[1],local_pos[3])
+							rpm/=2
+							break
+						end
+					end
+				end
+			end
+		end
+		
+		-- shortest angle
+		if(target_angle<0.5) target_angle=1-target_angle
+		target_angle=0.75-target_angle
+		self:steer(target_angle,rpm*lerp(1,0.5,min(abs(target_angle)/0.17,1)))
+
 	end
 	-- wrapper
 	return body
@@ -626,10 +736,21 @@ function start_state()
 	time_t=0
 
 	-- start over
-	track:reset()
+	actors,npcs={},{}
 
 	-- create player in correct direction
-	plyr=make_plyr(track.start_pos,0)
+	plyr=add(actors,make_plyr(track.start_pos,0))
+
+	-- npcs
+	--[[
+	for i=1,4 do
+		local npc_track=make_track(track.npc_path)
+		local p=v_clone(npc_track:get_next())
+		--p[1]+=(1-rnd(2))
+		p[3]+=i/8
+		add(actors,add(npcs, make_npc(p,0,npc_track)))
+	end
+	]]
 
 	local ttl=120 -- 4*30
 	return 
@@ -737,8 +858,6 @@ function _init()
 	-- first track data cart
 	reload(0,0,0x4300,"track_0.p8")
 	track=unpack_track()
-	track.reset=function()
-	end
 	-- 3d models cart
 	reload(0,0,0x4300,"track_models.p8")
 	-- load regular 3d models
@@ -756,12 +875,19 @@ function _update()
 	-- basic state mgt
 	update_state()
 
-	-- todo: update all actors
 	plyr:prepare()
 	plyr:integrate()	
 	plyr:update()
-	
+
+	for _,npc in pairs(npcs) do
+		npc:control()
+		npc:prepare()
+		npc:integrate()	
+		npc:update()
+	end
+
 	if plyr then
+		-- cam:track(npcs[1]:get_pos())
 		cam:track(plyr:get_pos())
 	end
 
@@ -804,6 +930,8 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 end
 
 function collect_model_faces(model,m,parts,out)
+	-- all models reuses the same faces!!
+	sessionid+=1
 	-- cam pos in object space
 	local p,cm={},cam.m
 	-- vertex group matrix
@@ -822,8 +950,7 @@ function collect_model_faces(model,m,parts,out)
 		if(d>model.lod_dist[i]) lodid+=1
 	end
 	
-	lodid=min(lodid,#model.lods-1)
-	model=model.lods[lodid+1]
+	model=model.lods[min(lodid,#model.lods-1)+1]
 	
 	local v_cache={
 		__index=function(t,k)
@@ -866,8 +993,6 @@ function collect_model_faces(model,m,parts,out)
 
 		collect_faces(vgroup.f,vg_cam_pos,p,out)
 	end
-
-	return d,lodid
 end
 
 function draw_faces(faces,v_cache)
@@ -969,42 +1094,54 @@ function _draw()
 			collect_faces(faces,cam.pos,p,out,dist)
 		end 
 	end
-		
-	-- track
 
- 	sort(out)
+	sort(out)
 	draw_faces(out,p)
 
 	local pos,angle,m=plyr:get_pos()
 	local cs,ss=cos(angle),-sin(angle)
 	-- draw npc path
 
-	local function npc_track_project(i)
-		local v=track.npc_path[i]
+	local function npc_track_project(v)
 		local x,y=v[1]-pos[1],v[3]-pos[3]
 		return 96+0.3*(cs*x-ss*y),64-0.3*(ss*x+cs*y)
 	end
-	local x0,y0=npc_track_project(#track.npc_path)
+	local x0,y0=npc_track_project(track.npc_path[#track.npc_path])
 	for i=1,#track.npc_path do
-		local x1,y1=npc_track_project(i)
+		local x1,y1=npc_track_project(track.npc_path[i])
 		line(x0,y0,x1,y1,0x1000)
 		x0,y0=x1,y1
+	end
+	-- draw other cars
+	for _,npc in pairs(npcs) do
+		x0,y0=npc_track_project(npc:get_pos())
+		circfill(x0,y0,1.5,0x4)
 	end
 	circfill(96,64,1,0x8)
  
 	-- clear vertex cache
 	out={}
-	-- m=make_m_from_euler(0,time()/16,0)
-	m_set_pos(m,pos)
-	-- car
-	local d,lodid=collect_model_faces(all_models["car"],m,plyr,out)
- 	sort(out)
+	for _,actor in pairs(actors) do
+		local pos,angle,m=actor:get_pos()
+		-- is model visible?
+		-- (e.g. voxel tile is visible)
+		local x0,y0=to_tile_coords(pos)
+		if tiles[x0+shl(y0,5)] then
+			m_set_pos(m,pos)
+			-- car
+			collect_model_faces(actor.model,m,actor,out)
+		end
+	end
+
+	sort(out)
 	draw_faces(out)
 	
+	-- hud and game state display
 	draw_state()
+
 	local cpu=flr(1000*stat(1))/10
 	local mem=ceil(stat(0))
-	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces.."\nlod:"..lodid.."@"..sqrt(d).."m"--.."\n"..cam.pos[1].."/"..cam.pos[3]
+	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces--.."\n"..cam.pos[1].."/"..cam.pos[3]
 	printb(cpu,2,2,7,2)
 end
 
@@ -1380,22 +1517,38 @@ __gfx__
 0000000077777777777777777777770009aaaaaaaa990ee0aaaaaa90ee0aaaaaaaaaa9009aaaaaaaa990000000000aa9009aaaaaaaa99009aaaaaaaa99000000
 00000000777777777777777777777770e09999999990eee099999990ee0999999999990e09999999990eeeeeeeee09990e09999999990ee09999999990e00000
 00000000777777777777777777777777ee000000000eeee000000000ee0000000000000ee000000000eeeeeeeeee00000ee000000000eeee000000000ee00000
-000000006666666633333333000000000000000000000ee000000000eeee000000000ee000000000000000000000000000000000000000000000000000000000
-000000006d6d6d6d33333333000000000aaaaaaaaaa90e0aaaaaaaaa0ee0aaaaaaaaa0e000000000000000000000000000000000000000000000000000000000
-000000003636363633333333000000000aaaaaaaaaa900aaaaaaaaaa900aaaaaaaaaa90000000000000000000000000000000000000000000000000000000000
-000000003333333333333333000000000aa999999aa900aa999999aa900aa999999aa90000000000000000000000000000000000000000000000000000000000
-000000003333333333333333000000000aa900000aa900aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
-0000000033333333333333330000000009990eee0aa900aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
-0000000033333333333333330000000000000ee0aaa900aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
-00000000333333333333333300000000eeeeee0aaa90ee0aaaaaaaa90e09aaaaaaaaa90000000000000000000000000000000000000000000000000000000000
-00000000e0eeee0e0000000000000000eeeee0aaa90eee0a999999a90ee09999999aa90000000000000000000000000000000000000000000000000000000000
-00000000070ee0700000000000000000eeee0aaa90eee0aa900000aa90000000000aa90000000000000000000000000000000000000000000000000000000000
-00000000e07ee70e0000000000000000eeee0aa90eeee0aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
-00000000eeeeeeee0000000000000000eeee0aa90eeee0aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
-00000000eeeeeeee0000000000000000eeee0aa90eeee0aaaaaaaaaa900aaaaaaaaaa90000000000000000000000000000000000000000000000000000000000
-00000000e07ee70e0000000000000000eeee0aa90eeee0aaaaaaaaa99009aaaaaaaa990000000000000000000000000000000000000000000000000000000000
-00000000070ee0700000000000000000eeee09990eeeee09999999990ee09999999990e000000000000000000000000000000000000000000000000000000000
-00000000e0eeee0e0000000000000000eeee00000eeeeee000000000eeee000000000ee000000000000000000000000000000000000000000000000000000000
+000000006666666633333333000000000000000000000ee000000000eeee000000000ee0eeee00eeeeeeeeeeeee00000eeeeeeeeeee00000eeeeeeee00000000
+000000006d6d6d6d33333333000000000aaaaaaaaaa90e0aaaaaaaaa0ee0aaaaaaaaa0e0eee0770eeeeeeeeeee0777770eeeeeeeee0777770eeeeeee00000000
+000000003636363633333333000000000aaaaaaaaaa900aaaaaaaaaa900aaaaaaaaaa900e007770eeeeeeeeee077777770eeeeeee077777770eeeeee00000000
+000000003333333333333333000000000aa999999aa900aa999999aa900aa999999aa9000777770eeeeeeeee07700077770eeeee07700077770eeeee00000000
+000000003333333333333333000000000aa900000aa900aa900000aa900aa900000aa9000000770eeeeeeeee070eee07770eeeee070eee07770eeeee00000000
+0000000033333333333333330000000009990eee0aa900aa90eee0aa900aa90eee0aa900eee0770eeeeeeeeee0eeeee0770eeeeee0eeeee0770eeeee00000000
+0000000033333333333333330000000000000ee0aaa900aa900000aa900aa900000aa900eee0770eeeeeeeeeeeeeeee0770eeeeeeeeeeee0770eeeee00000000
+00000000333333333333333300000000eeeeee0aaa90ee0aaaaaaaa90e09aaaaaaaaa900eee0770eeeeeeeeeeeeeeee0770eeeeeeeeee00770eeeeee00000000
+00000000e0eeee0e0000000000000000eeeee0aaa90eee0a999999a90ee09999999aa900eee0770eeeeeeeeeeeeeee0770eeeeeeeeee07770eeeeeee00000000
+00000000070ee0700000000000000000eeee0aaa90eee0aa900000aa90000000000aa900eee0770eeeeeeeeeeeeee0770eeeeeeeeeeee00770eeeeee00000000
+00000000e07ee70e0000000000000000eeee0aa90eeee0aa90eee0aa900aa90eee0aa900eee0770eeeeeeeeeeeee0770eeeeeeeee00eeee0770eeeee00000000
+00000000eeeeeeee0000000000000000eeee0aa90eeee0aa900000aa900aa900000aa900eee0770eeeeeeeeeeee0770eeee0eeee0770eee0770eeeee00000000
+00000000eeeeeeee0000000000000000eeee0aa90eeee0aaaaaaaaaa900aaaaaaaaaa900eee0770eeeeeeeeeee0770eeee070eee0770eee0770eeeee00000000
+00000000e07ee70e0000000000000000eeee0aa90eeee0aaaaaaaaa99009aaaaaaaa9900e00777700eeeeeeee077000000770eeee077000770eeeeee00000000
+00000000070ee0700000000000000000eeee09990eeeee09999999990ee09999999990e00777777770eeeeee077777777770eeeeee0777770eeeeeee00000000
+00000000e0eeee0e0000000000000000eeee00000eeeeee000000000eeee000000000ee00000000000eeeeee00000000000eeeeeeee00000eeeeeeee00000000
+eeeeee00eeeeeeeeee00000eeeeeeeeeeeeeee000eeeeeeeeeeee00000ee00eeeeeee00000eeeeee000000000000000000000000000000000000000000000000
+eeeee0770eeeeeeee0777770eeeeeeeeeeeee07770eeeeeeeee00777770070eeeee007777700eeee000000000000000000000000000000000000000000000000
+eee007770eeeeeee077777770eee0eeeeeee0777770eeeeeee077000007770eeee07700000770eee000000000000000000000000000000000000000000000000
+ee0777770eeeeee07700077770ee70eeeeee0777770eeeeee0770eeeee0770eee0770eeeee0770ee000000000000000000000000000000000000000000000000
+ee0000770eeeeee070eee07770ee70eeeeee0777770eeeeee0770eeeeee070eee0770eeeee0770ee000000000000000000000000000000000000000000000000
+eeeee0770eeeeeee0eeeee0770ee70eeeeeee07770eeeeeee070eeeeeee070eee070eeeeeee070ee000000000000000000000000000000000000000000000000
+eeeee0770eeeeeeeeeeeee0770ee770eeeeee07770eeeeee0770eeeeeeee00ee0770eeeeeee0770e000000000000000000000000000000000000000000000000
+eeeee0770eeeeeeeeeeeee0770ee770eeeeeee070eeeeeee0770eeeeeeeeeeee0770eeeeeee0770e000000000000000000000000000000000000000000000000
+eeeee0770eeeeeeeeeeee0770eee770eeeeeee070eeeeeee0770eeeee000000e0770eeeeeee0770e000000000000000000000000000000000000000000000000
+eeeee0770eeeeeeeeeee0770eeee770eeeeeeee0eeeeeeee0770eeeee077770e0770eeeeeee0770e000000000000000000000000000000000000000000000000
+eeeee0770eeeeeeeeee0770eeeee70eeeeeeeeeeeeeeeeeee070eeeeee0770eee070eeeeeee070ee000000000000000000000000000000000000000000000000
+eeeee0770eeeeeeeee0770eeee0e70eeeeeeee000eeeeeeee0770eeeee0770eee0770eeeee0770ee000000000000000000000000000000000000000000000000
+eeeee0770eeeeeeee0770eeee07070eeeeeee07770eeeeeee0770eeeee0770eee0770eeeee0770ee000000000000000000000000000000000000000000000000
+eee00777700eeeee0770000007700eeeeeeee07770eeeeeeee07700000770eeeee07700000770eee000000000000000000000000000000000000000000000000
+ee0777777770eee077777777770eeeeeeeeee07770eeeeeeeee007777700eeeeeee007777700eeee000000000000000000000000000000000000000000000000
+ee0000000000eee00000000000eeeeeeeeeeee000eeeeeeeeeeee00000eeeeeeeeeee00000eeeeee000000000000000000000000000000000000000000000000
 __map__
 0303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
