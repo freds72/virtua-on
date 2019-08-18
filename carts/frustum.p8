@@ -234,6 +234,21 @@ local k_right,k_left=4,8
 local z_near=0.05
 local current_face
 
+-- fonts
+local xlfont={
+ width=13,
+ ["0"]=0x2000,
+ ["1"]=0x2d00,
+ ["2"]=0x3a00,
+ ["3"]=0x4700,
+ ["4"]=0x5400,
+ ["5"]=0x6100,
+ ["6"]=0x6e00,
+ ["7"]=0x2010,
+ ["8"]=0x2d10,
+ ["9"]=0x3a10
+}
+
 -- voxel helpers
 function to_tile_coords(v)
 	local x,y=shr(v[1],3)+16,shr(v[3],3)+16
@@ -248,13 +263,16 @@ function make_cam()
 	-- 1: close
 	-- 2: cockpit
 	local view_mode=0
-	-- view offset/angle
+	-- view offset/angle/lag
 	local view_pov={
-		{-2.2,1.5,0.1},
-		{-0.7,0.3,0},
-		{-0.01,0.11,0}
+		{-2.2,1.5,0.2},
+		{-0.7,0.3,0.1},
+		{-0.01,0.11,1}
 	}
 	local current_pov=v_clone(view_pov[view_mode+1])
+
+	--
+	local up={0,1,0}
 
 	-- raycasting constants
 	local angles={}
@@ -281,17 +299,21 @@ function make_cam()
 				end)
 			end
 		end,
-		track=function(self,pos,a,m)
+		track=function(self,pos,a,u)
    			pos=v_clone(pos)
-   			-- height
-			self.angle=a
+   			-- lerp angle
+			self.angle=lerp(self.angle,a,current_pov[3])
+			-- lerp orientation
+			up=v_lerp(up,u,current_pov[3])
+			v_normz(up)
+			
 			-- inverse view matrix
-			m=m_from_q(make_q(v_up,a))
+			local m=m_from_q(make_q(up,self.angle))
 			v_add(pos,m_fwd(m),current_pov[1])
-			v_add(pos,v_up,current_pov[2])
+			v_add(pos,m_up(m),current_pov[2])
 			
 			m_inv(m)
-		 	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
+		 m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
 			self.pos,self.m=pos,m
 		end,
 		project_poly=function(self,p,c)
@@ -451,7 +473,13 @@ function make_car(model,p,angle)
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
 		get_pos=function(self)
-	 		return self.pos,angle,m_from_q(make_q(oldf and oldf.n or v_up,angle))
+	 		return self.pos,angle
+		end,
+		get_orient=function()
+			return m_from_q(make_q(oldf and oldf.n or v_up,angle))
+		end,
+		get_up=function()
+			return oldf and oldf.n or v_up
 		end,
 		get_velocity=function() return velocity end,	
 		apply_force_and_torque=function(self,f,t)
@@ -752,22 +780,25 @@ function start_state()
 	end
 	]]
 
-	local ttl=120 -- 4*30
+	local ttl=90 -- 3*30
+
 	return 
 		-- draw
 		function()
-			local t=flr(ttl/30)
+			local sx=flr(ttl/30)*12
+			printxl(sx,32,12,16,50)
+
 			-- todo: allow acceleration during "go"
 			-- todo: boost if acceleration is at frame 15
-			print(t==0 and "go!" or tostr(t),60,46,21,2)
 		end,
 		-- update
 		function()
-			if(ttl%30==0) sfx(ttl<=30 and 2 or 1)
+			if(ttl%30==0) sfx(1)
 			ttl-=1
-			if(ttl<0) next_state(play_state)
+			if(ttl<0) sfx(2) next_state(play_state)
 		end
 end
+
 
 function play_state()
 	-- active index
@@ -785,13 +816,24 @@ function play_state()
 	-- remaining time before game over (+ some buffer time)
 	local lap_t,remaining_t,best_t,best_i=0,30*30,32000,1
 	
+	-- go display
+	local go_ttl=30
+
+	local function track_project(v,pos,cc,ss)
+		local x,y=v[1]-pos[1],v[3]-pos[3]
+		return 96+0.3*(cc*x-ss*y),64-0.3*(ss*x+cc*y)
+	end
+		
 	return
 		-- draw
 		function()
 			printb("lap time",90,2,7,0)
 			printb("time",56,2,7,0)
-			printxl(tostr(ceil(remaining_t/30)),64,9)
+			printf(tostr(ceil(remaining_t/30)),64,9,xlfont)
 			
+			-- blink go!
+			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,50)
+
 			local y=9
 			for i=1,#laps do
 				printb(i,90,y,9,0)
@@ -800,10 +842,28 @@ function play_state()
 			end
 			printb(#laps+1,90,y,9,0)
 			printb(time_tostr(lap_t),98,y,7,0)
-		end,
+			
+			-- track map
+			local pos,angle=plyr:get_pos()
+			local cc,ss=cos(angle),-sin(angle)
+			-- draw npc path
+			local x0,y0=track_project(track.npc_path[#track.npc_path],pos,cc,ss)
+			for i=1,#track.npc_path do
+				local x1,y1=track_project(track.npc_path[i],pos,cc,ss)
+				line(x0,y0,x1,y1,0x1000)
+				x0,y0=x1,y1
+			end
+			-- draw other cars
+			for _,npc in pairs(npcs) do
+				x0,y0=track_project(npc:get_pos(),pos,cc,ss)
+				circfill(x0,y0,1.5,0x4)
+			end
+			circfill(96,64,1,0x8)			
+ 		end,
 		-- update
 		function()
 			remaining_t-=1
+			go_ttl-=1
 			if remaining_t==0 then
 				next_state(gameover_state)
 				return
@@ -834,15 +894,18 @@ end
 
 function gameover_state()
 	local ttl=900
+	local angle=-0.5
 	return 
 		-- draw
 		function()
-			print("game over",35,46,11)
-			?"press ❎/🅾️ to continue",24,110,ttl%2==0 and 7 or 11
+			-- rotating game over
+			print3d(39,32,57,32,50,angle)
+			if(ttl%4<2) printb("press ❎/🅾️ to continue",24,110,7,0)
 		end,
 		-- update
 		function()
 			ttl-=1
+			angle+=0.01
 			if btnp(4) or btnp(5) or ttl<0 then
 				next_state(start_state)
 			end
@@ -888,7 +951,8 @@ function _update()
 
 	if plyr then
 		-- cam:track(npcs[1]:get_pos())
-		cam:track(plyr:get_pos())
+		local pos,a=plyr:get_pos()
+		cam:track(pos,a,plyr:get_up())
 	end
 
 	skidmarks:update()
@@ -901,11 +965,14 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
 			local z,y,outcode,verts,is_clipped=0,0,0xffff,{},0
+			-- debug
+			local center={0,0,0}
 			-- project vertices
 			for ki=1,face.ni do
 				local a=v_cache[face[ki]]
 				y+=a[2]
 				z+=a[3]
+				v_add(center,a)
 				outcode=band(outcode,a.outcode)
 				-- behind near plane?
 				is_clipped+=band(a.outcode,2)
@@ -916,10 +983,13 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 	   			-- average before changing verts
 				y/=#verts
 				z/=#verts
+				-- debug
+				v_scale(center,1/#verts)
+
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
-					out[n]={key=1/(y*y+z*z),f=face,v=verts,dist=dist}
+					out[n]={key=1/(y*y+z*z),f=face,v=verts,dist=dist,center=center}
 				 	-- 0.1% faster vs [#out+1]
 				 	n+=1
 				end
@@ -996,7 +1066,6 @@ function collect_model_faces(model,m,parts,out)
 end
 
 function draw_faces(faces,v_cache)
-	-- all poly are encoded with 2 colors
 	for i=1,#faces do
 		local d=faces[i]
 		cam:project_poly(d.v,d.f.c)
@@ -1047,6 +1116,16 @@ function draw_faces(faces,v_cache)
 				end
 			end
 		end
+		-- debug
+		--[[
+		if d.center then
+			local x0,y0=63.5+flr(shl(d.center[1]/d.center[3],6)),63.5-flr(shl(d.center[2]/d.center[3],6))
+			local n=v_clone(d.f.n)
+			v_add(n,d.center,2)
+			local x1,y1=63.5+flr(shl(n[1]/n[3],6)),63.5-flr(shl(n[2]/n[3],6))
+			line(x0,y0,x1,y1,8)
+		end
+		]]
 	end
 end
 
@@ -1084,49 +1163,27 @@ function _draw()
 	local tiles=cam:visible_tiles()
 
 	local out={}
-	local total_faces=0
 	-- get visible voxels
 	for k,dist in pairs(tiles) do
 	--for k,_ in pairs(track.voxels) do
 		local faces=track.voxels[k]
 		if faces then
-			total_faces+=#faces
 			collect_faces(faces,cam.pos,p,out,dist)
 		end 
 	end
 
 	sort(out)
 	draw_faces(out,p)
-
-	local pos,angle,m=plyr:get_pos()
-	local cs,ss=cos(angle),-sin(angle)
-	-- draw npc path
-
-	local function npc_track_project(v)
-		local x,y=v[1]-pos[1],v[3]-pos[3]
-		return 96+0.3*(cs*x-ss*y),64-0.3*(ss*x+cs*y)
-	end
-	local x0,y0=npc_track_project(track.npc_path[#track.npc_path])
-	for i=1,#track.npc_path do
-		local x1,y1=npc_track_project(track.npc_path[i])
-		line(x0,y0,x1,y1,0x1000)
-		x0,y0=x1,y1
-	end
-	-- draw other cars
-	for _,npc in pairs(npcs) do
-		x0,y0=npc_track_project(npc:get_pos())
-		circfill(x0,y0,1.5,0x4)
-	end
-	circfill(96,64,1,0x8)
  
 	-- clear vertex cache
 	out={}
 	for _,actor in pairs(actors) do
-		local pos,angle,m=actor:get_pos()
+		local pos,angle=actor:get_pos()
 		-- is model visible?
 		-- (e.g. voxel tile is visible)
 		local x0,y0=to_tile_coords(pos)
 		if tiles[x0+shl(y0,5)] then
+			local m=actor:get_orient()
 			m_set_pos(m,pos)
 			-- car
 			collect_model_faces(actor.model,m,actor,out)
@@ -1135,13 +1192,13 @@ function _draw()
 
 	sort(out)
 	draw_faces(out)
-	
+
 	-- hud and game state display
 	draw_state()
 
 	local cpu=flr(1000*stat(1))/10
 	local mem=ceil(stat(0))
-	cpu=cpu.."%\n"..mem.."kb\n█:"..#out.."/"..total_faces--.."\n"..cam.pos[1].."/"..cam.pos[3]
+	cpu=cpu.."%\n"..mem.."kb"--.."\n"..cam.pos[1].."/"..cam.pos[3]
 	printb(cpu,2,2,7,2)
 end
 
@@ -1472,32 +1529,61 @@ function printb(s,x,y,c1,c2)
 	?s,x,y+1,c2 or 1
 	?s,x,y,c1
 end
-
-local xlfont={
- ["0"]=0x2000,
- ["1"]=0x2d00,
- ["2"]=0x3a00,
- ["3"]=0x4700,
- ["4"]=0x5400,
- ["5"]=0x6100,
- ["6"]=0x6e00,
- ["7"]=0x2010,
- ["8"]=0x2d10,
- ["9"]=0x3a10
-}
-
-function printxl(s,x,y)
+-- print string s from bitmap font
+function printf(s,x,y,font)
 	palt(14,true)
 	palt(0,false)
-	x-=#s*6.5
+	local w=font.width
+	x-=#s*w/2
 	for i=1,#s do
-		local f=xlfont[sub(s,i,i)]
+		local f=font[sub(s,i,i)]
 		local sx,sy=shr(f,8),band(f,0xff)
-		sspr(sx,sy,13,16,x,y)		
-		x+=13
+		sspr(sx,sy,w,16,x,y)		
+		x+=w
 	end
 	
 	palt()
+end
+
+-- big font
+function printxl(sx,sy,sw,sh,dy)
+	palt(14,true)
+	palt(0,false)
+
+ sspr(sx,sy,sw,sh,64-sw/2,dy)
+ palt()	
+end
+
+-- print sprite sx/sy at y on screen
+-- x centered
+-- perspective correct rotation by angle
+function print3d(sx,sy,sw,sh,y,angle)
+	local cc,ss=cos(angle),-sin(angle)
+	local z0,z1=2+cc,2-cc
+	-- projection
+ 	local y0,y1,w0,w1=-sh*ss/z0,sh*ss/z1,sw/z0,sw/z1
+ 	if(y0>y1)y0,y1,w0,w1=y1,y0,w1,w0
+ 	local len=y1-y0
+	-- perspective correct mapping
+	palt(14,true)
+	palt(0,false)
+ 	local u,du,dw=0,sh*w1/len,(w1-w0)/len
+ 	for y=y+y0,y+y1-0.5 do
+ 		sspr(sx,sy+u/w0,sw,1,63.5-w0,y,2*w0,1)
+  		u+=du
+  		w0+=dw
+ 	end
+	palt()
+end
+
+-- rotating print3d (1sec rotation w/ yield)
+function rprint3d_async(sx,sy,sw,sh)
+	local angle=-0.5
+	for k=0,29 do
+		print3d(sx,sy,sw,sh,50,angle)
+		angle+=0.016
+		yield()
+	end
 end
 
 __gfx__
@@ -1517,38 +1603,54 @@ __gfx__
 0000000077777777777777777777770009aaaaaaaa990ee0aaaaaa90ee0aaaaaaaaaa9009aaaaaaaa990000000000aa9009aaaaaaaa99009aaaaaaaa99000000
 00000000777777777777777777777770e09999999990eee099999990ee0999999999990e09999999990eeeeeeeee09990e09999999990ee09999999990e00000
 00000000777777777777777777777777ee000000000eeee000000000ee0000000000000ee000000000eeeeeeeeee00000ee000000000eeee000000000ee00000
-000000006666666633333333000000000000000000000ee000000000eeee000000000ee0eeee00eeeeeeeeeeeee00000eeeeeeeeeee00000eeeeeeee00000000
-000000006d6d6d6d33333333000000000aaaaaaaaaa90e0aaaaaaaaa0ee0aaaaaaaaa0e0eee0770eeeeeeeeeee0777770eeeeeeeee0777770eeeeeee00000000
-000000003636363633333333000000000aaaaaaaaaa900aaaaaaaaaa900aaaaaaaaaa900e007770eeeeeeeeee077777770eeeeeee077777770eeeeee00000000
-000000003333333333333333000000000aa999999aa900aa999999aa900aa999999aa9000777770eeeeeeeee07700077770eeeee07700077770eeeee00000000
-000000003333333333333333000000000aa900000aa900aa900000aa900aa900000aa9000000770eeeeeeeee070eee07770eeeee070eee07770eeeee00000000
-0000000033333333333333330000000009990eee0aa900aa90eee0aa900aa90eee0aa900eee0770eeeeeeeeee0eeeee0770eeeeee0eeeee0770eeeee00000000
-0000000033333333333333330000000000000ee0aaa900aa900000aa900aa900000aa900eee0770eeeeeeeeeeeeeeee0770eeeeeeeeeeee0770eeeee00000000
-00000000333333333333333300000000eeeeee0aaa90ee0aaaaaaaa90e09aaaaaaaaa900eee0770eeeeeeeeeeeeeeee0770eeeeeeeeee00770eeeeee00000000
-00000000e0eeee0e0000000000000000eeeee0aaa90eee0a999999a90ee09999999aa900eee0770eeeeeeeeeeeeeee0770eeeeeeeeee07770eeeeeee00000000
-00000000070ee0700000000000000000eeee0aaa90eee0aa900000aa90000000000aa900eee0770eeeeeeeeeeeeee0770eeeeeeeeeeee00770eeeeee00000000
-00000000e07ee70e0000000000000000eeee0aa90eeee0aa90eee0aa900aa90eee0aa900eee0770eeeeeeeeeeeee0770eeeeeeeee00eeee0770eeeee00000000
-00000000eeeeeeee0000000000000000eeee0aa90eeee0aa900000aa900aa900000aa900eee0770eeeeeeeeeeee0770eeee0eeee0770eee0770eeeee00000000
-00000000eeeeeeee0000000000000000eeee0aa90eeee0aaaaaaaaaa900aaaaaaaaaa900eee0770eeeeeeeeeee0770eeee070eee0770eee0770eeeee00000000
-00000000e07ee70e0000000000000000eeee0aa90eeee0aaaaaaaaa99009aaaaaaaa9900e00777700eeeeeeee077000000770eeee077000770eeeeee00000000
-00000000070ee0700000000000000000eeee09990eeeee09999999990ee09999999990e00777777770eeeeee077777777770eeeeee0777770eeeeeee00000000
-00000000e0eeee0e0000000000000000eeee00000eeeeee000000000eeee000000000ee00000000000eeeeee00000000000eeeeeeee00000eeeeeeee00000000
-eeeeee00eeeeeeeeee00000eeeeeeeeeeeeeee000eeeeeeeeeeee00000ee00eeeeeee00000eeeeee000000000000000000000000000000000000000000000000
-eeeee0770eeeeeeee0777770eeeeeeeeeeeee07770eeeeeeeee00777770070eeeee007777700eeee000000000000000000000000000000000000000000000000
-eee007770eeeeeee077777770eee0eeeeeee0777770eeeeeee077000007770eeee07700000770eee000000000000000000000000000000000000000000000000
-ee0777770eeeeee07700077770ee70eeeeee0777770eeeeee0770eeeee0770eee0770eeeee0770ee000000000000000000000000000000000000000000000000
-ee0000770eeeeee070eee07770ee70eeeeee0777770eeeeee0770eeeeee070eee0770eeeee0770ee000000000000000000000000000000000000000000000000
-eeeee0770eeeeeee0eeeee0770ee70eeeeeee07770eeeeeee070eeeeeee070eee070eeeeeee070ee000000000000000000000000000000000000000000000000
-eeeee0770eeeeeeeeeeeee0770ee770eeeeee07770eeeeee0770eeeeeeee00ee0770eeeeeee0770e000000000000000000000000000000000000000000000000
-eeeee0770eeeeeeeeeeeee0770ee770eeeeeee070eeeeeee0770eeeeeeeeeeee0770eeeeeee0770e000000000000000000000000000000000000000000000000
-eeeee0770eeeeeeeeeeee0770eee770eeeeeee070eeeeeee0770eeeee000000e0770eeeeeee0770e000000000000000000000000000000000000000000000000
-eeeee0770eeeeeeeeeee0770eeee770eeeeeeee0eeeeeeee0770eeeee077770e0770eeeeeee0770e000000000000000000000000000000000000000000000000
-eeeee0770eeeeeeeeee0770eeeee70eeeeeeeeeeeeeeeeeee070eeeeee0770eee070eeeeeee070ee000000000000000000000000000000000000000000000000
-eeeee0770eeeeeeeee0770eeee0e70eeeeeeee000eeeeeeee0770eeeee0770eee0770eeeee0770ee000000000000000000000000000000000000000000000000
-eeeee0770eeeeeeee0770eeee07070eeeeeee07770eeeeeee0770eeeee0770eee0770eeeee0770ee000000000000000000000000000000000000000000000000
-eee00777700eeeee0770000007700eeeeeeee07770eeeeeeee07700000770eeeee07700000770eee000000000000000000000000000000000000000000000000
-ee0777777770eee077777777770eeeeeeeeee07770eeeeeeeee007777700eeeeeee007777700eeee000000000000000000000000000000000000000000000000
-ee0000000000eee00000000000eeeeeeeeeeee000eeeeeeeeeeee00000eeeeeeeeeee00000eeeeee000000000000000000000000000000000000000000000000
+000000006666666633333333000000000000000000000ee000000000eeee000000000ee000000000000000000000000000000000000000000000000000000000
+000000006d6d6d6d33333333000000000aaaaaaaaaa90e0aaaaaaaaa0ee0aaaaaaaaa0e000000000000000000000000000000000000000000000000000000000
+000000003636363633333333000000000aaaaaaaaaa900aaaaaaaaaa900aaaaaaaaaa90000000000000000000000000000000000000000000000000000000000
+000000003333333333333333000000000aa999999aa900aa999999aa900aa999999aa90000000000000000000000000000000000000000000000000000000000
+000000003333333333333333000000000aa900000aa900aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
+0000000033333333333333330000000009990eee0aa900aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
+0000000033333333333333330000000000000ee0aaa900aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
+00000000333333333333333300000000eeeeee0aaa90ee0aaaaaaaa90e09aaaaaaaaa90000000000000000000000000000000000000000000000000000000000
+00000000e0eeee0e0000000000000000eeeee0aaa90eee0a999999a90ee09999999aa90000000000000000000000000000000000000000000000000000000000
+00000000070ee0700000000000000000eeee0aaa90eee0aa900000aa90000000000aa90000000000000000000000000000000000000000000000000000000000
+00000000e07ee70e0000000000000000eeee0aa90eeee0aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
+00000000eeeeeeee0000000000000000eeee0aa90eeee0aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
+00000000eeeeeeee0000000000000000eeee0aa90eeee0aaaaaaaaaa900aaaaaaaaaa90000000000000000000000000000000000000000000000000000000000
+00000000e07ee70e0000000000000000eeee0aa90eeee0aaaaaaaaa99009aaaaaaaa990000000000000000000000000000000000000000000000000000000000
+00000000070ee0700000000000000000eeee09990eeeee09999999990ee09999999990e000000000000000000000000000000000000000000000000000000000
+0000000070eeee0e0000000000000000eeee00000eeeeee000000000eeee000000000ee000000000000000000000000000000000000000000000000000000000
+eeeee00eeeeeeeee0000eeeeeeee0000eeeeeeeeeeee0000eee0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
+eee00770eeeeeee077770eeeeee077770eeeeeeeeee0777700070eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
+ee077770eeeeee07777770eeee07007770eeeeeeee07700007770eeeee000000eeeeee00ee00e0000eeeeeee00000eee00000000000000000000000000000000
+ee000770eeeee0770007770ee070ee0770eeeeeee0700eeee0770eeee07777770eeee0770077077770eeeee0777770ee00000000000000000000000000000000
+eeee0770eeeee070eee0770eee0eee0770eeeeee0770eeeeee070eee0700007770ee077777777007770eee070007770e00000000000000000000000000000000
+eeee0770eeeeee0eeee0770eeeeee0070eeeeeee070eeeeeeee0eee0770eee0770eee077000770e0770ee070eee0770e00000000000000000000000000000000
+eeee0770eeeeeeeeeee0770eeeee07700eeeeee0770eeeee000000e0770eee0770eee0770e0770e0770e07700000777000000000000000000000000000000000
+eeee0770eeeeeeeeeee070eeeee0777770eeeee0770eeee07777770e00e0007770eee0770e0770e0770e07777777777000000000000000000000000000000000
+eeee0770eeeeeeeeee070eeeeeee007770eeeee0770eeeee007700eee007770770eee0770e0770e0770e07700000000e00000000000000000000000000000000
+eeee0770eeeeeeeeee070eeeeeeeee07770eeee0770eeeeee0770eee0777000770eee0770e0770e0770e0770eeeeee0e00000000000000000000000000000000
+eeee0770eeeeeeeee070eeeeeeeeeee0770eeee0770eeeeee0770ee07700ee0770eee0770e0770e0770e0770eeeee07000000000000000000000000000000000
+eeee0770eeeeeeee070eee0eeeeeeee0770eeeee0770eeeee0770ee0770eee0770eee0770e0770e0770e07770eeee07000000000000000000000000000000000
+eeee0770eeeeeee070000070ee00eee070eeeeee07770eeee0770ee0770eee07700ee0770e0770e0770ee0777000070e00000000000000000000000000000000
+eee007700eeeee0777777770e077000770eeeeeee077700007770ee0777000707070e0770e0770e0770eee077777770e00000000000000000000000000000000
+ee07777770eee0777777770ee07777700eeeeeeeee0077777700eeee0777770e770e0777707770077770eee0777700ee00000000000000000000000000000000
+ee00000000eee000000000eeee00000eeeeeeeeeeeee000000eeeeeee00000ee00ee000000000ee0000eeeee0000eeee00000000000000000000000000000000
+eeeee0000eee0eeeeeeee00000eeeeeee00eeeeeeeee00000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00e00000000000000000000000000000000
+eeee0777700070eeeee007777700eeee0770eeeeee007777700eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee077000000000000000000000000000000000
+eee07700007770eeee07700000770eee0770eeeee07700000770eee00000eee0000eeeee00000eeeeee00ee000ee077000000000000000000000000000000000
+ee0700eeee0770eee0770eeeee0770ee0770eeee0770eeeee0770e0777770e077770eee0777770eee0077007770e077000000000000000000000000000000000
+e0770eeeeee070eee0770eeeee0770ee0770eeee0770eeeee0770ee07770eee0700eee070007770e07777770770e077000000000000000000000000000000000
+e070eeeeeeee0eee0770eeeeeee0770e0770eee0770eeeeeee0770ee0770eee070eee070eee0770ee007700e00ee077000000000000000000000000000000000
+0770eeeee000000e0770eeeeeee0770e0770eee0770eeeeeee0770ee0770eee070ee077000007770ee0770eeeeee077000000000000000000000000000000000
+0770eeee077777700770eeeeeee0770e070eeee0770eeeeeee0770eee0770e070eee077777777770ee0770eeeeee070e00000000000000000000000000000000
+0770eeeee007700e0770eeeeeee0770e070eeee0770eeeeeee0770eee0770e070eee07700000000eee0770eeeeee070e00000000000000000000000000000000
+0770eeeeee0770ee0770eeeeeee0770e070eeee0770eeeeeee0770eee0770070eeee0770eeeeee0eee0770eeeeee070e00000000000000000000000000000000
+0770eeeeee0770ee0770eeeeeee0770e070eeee0770eeeeeee0770eeee077070eeee0770eeeee070ee0770eeeeee070e00000000000000000000000000000000
+e0770eeeee0770eee0770eeeee0770eee0eeeeee0770eeeee0770eeeee077070eeee07770eeee070ee0770eeeeeee0ee00000000000000000000000000000000
+e07770eeee0770eee0770eeeee0770eee00eeeee0770eeeee0770eeeeee0770eeeeee0777000070eee0770eeeeeee00e00000000000000000000000000000000
+ee077700007770eeee07700000770eee0770eeeee07700000770eeeeeee0770eeeeeee077777770ee007700eeeee077000000000000000000000000000000000
+eee0077777700eeeeee007777700eeee0770eeeeee007777700eeeeeeee0770eeeeeeee0777700ee07777770eeee077000000000000000000000000000000000
+eeeee000000eeeeeeeeee00000eeeeeee00eeeeeeeee00000eeeeeeeeeee00eeeeeeeeee0000eeee00000000eeeee00e00000000000000000000000000000000
 __map__
 0303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
