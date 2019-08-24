@@ -54,6 +54,12 @@ function v_normz(v)
 	end
 	return d
 end
+function v_cross(a,b)
+	local ax,ay,az=a[1],a[2],a[3]
+	local bx,by,bz=b[1],b[2],b[3]
+	return {ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx}
+end
+
 function v_lerp(a,b,t)
 	return {
 		lerp(a[1],b[1],t),
@@ -348,7 +354,19 @@ function make_car(p,angle)
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
 		get_pos=function(self)
-	 		return self.pos,angle,m_from_q(make_q(oldf and oldf.n or v_up,angle))
+			--
+			local fwd={cos(-angle-0.25),0,-sin(-angle-0.25)}
+			local up=oldf and oldf.n or v_up
+			local right=v_cross(up,fwd)
+			v_normz(right)
+			fwd=v_cross(up,right)
+			local m={
+				right[1],right[2],right[3],0,
+				up[1],up[2],up[3],0,
+				fwd[1],fwd[2],fwd[3],0,
+				0,0,0,1
+			}
+	 		return self.pos,angle,m
 		end,
 		-- obj to world space
 		apply=function(self,p)
@@ -370,7 +388,7 @@ function make_car(p,angle)
 
 			-- apply some damping
 			angularv*=0.86
-			v_scale(velocity,0.97)
+			v_scale(velocity,0.9)
 			-- some friction
 			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
 		end,
