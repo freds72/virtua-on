@@ -9,11 +9,11 @@ function edge_rasterizer()
 	-- https://www.lexaloffle.com/bbs/?tid=2477
 	local function sort(a)
 		for i=1,#a do
-		-- reuse i!!!
+			-- reuse i!!!
 			local j=i
 			while j>1 and a[j-1].x>a[j].x do
-			a[j],a[j-1]=a[j-1],a[j]
-			j-=1
+				a[j],a[j-1]=a[j-1],a[j]
+				j-=1
 			end
 		end
 	end
@@ -23,7 +23,7 @@ function edge_rasterizer()
 	add=function(self,verts,c,z)
 		local v0=verts[#verts]
 		-- polygon
-		local p={z=z,c=c}
+		local p={z=z,c=c,winding=0}
 		for i=1,#verts do
 			local v1=verts[i]
 			-- edge building
@@ -41,40 +41,93 @@ function edge_rasterizer()
 		end
 	end,
  	draw=function(self)			 
- 		color(7)
-		-- active edge table
-		local aet={}
+ 		local aet={}
 		for y=ymin,ymax do
-			local span=edges[y]
-			-- new edges at y?
-			if span then
-				for i=1,#span do
-					aet[#aet+1]=span[i]
+			-- active polygons on scanline
+			local apl={}
+			local nearest,xmin
+			-- get active edges
+			local el=edges[y]
+			if el then
+				for _,e in pairs(el) do
+					aet[#aet+1]=e
 				end
-				print(#aet,2,y,1)
 			end
-			-- order spans
+			-- sort by x
 			sort(aet)
-
-			-- draw spans
-			for i=1,#aet-1 do
-				local e0,e1=aet[i],aet[i+1]
-				rectfill(e0.x,y,e1.x,y,i)
-				--pset(e0.x,y)
+			--[[
+			if y%10==0 then
+				for i=1,#aet do
+					local e=aet[i]
+					print(i,e.x,y-2,1)
+				end
 			end
-
-			-- prepare next
-			for _,e in pairs(aet) do
-				-- edge done?
-				if y>=e.ymax then
-					del(aet,e)
+			]]
+			-- iterate over active edges
+			for i=1,#aet do
+				local e=aet[i]
+				if y>e.ymax then
+					-- end of active edge
+					-- del(aet,e)
+					e.poly.winding=0
+					aet[i]=nil
 				else
-					-- step
+					-- 
+					local p=e.poly
+					p.winding+=1
+					-- entering?
+					if p.winding==1 then
+						-- register into apl
+						add(apl,p)						
+						-- pset(e.x,y,11)
+						-- nearest poly?
+						if nearest then							
+							-- leaving nearest poly
+							if nearest.z<p.z then		
+								-- draw previous nearest
+								rectfill(xmin,y,e.x,y,nearest.c)
+								-- record nearest x
+								xmin,nearest=e.x,p
+							end
+						else
+							nearest,xmin=p,e.x							
+						end
+					else
+						-- only convex polygons
+						assert(p.winding==2)
+						-- unregister poly
+						del(apl,p)
+						-- pset(e.x,y,8)
+						p.winding=0
+						-- leaving?
+						if nearest==p then
+							-- pset(e.x,y,7)
+							-- draw nearest
+							rectfill(xmin,y,e.x,y,p.c)
+							-- record nearest x
+							xmin,nearest=e.x
+							-- search for new nearest
+							local zmax=-32000
+							for _,poly in pairs(apl) do
+								if poly.z>zmax then
+									nearest,zmax=poly,poly.z
+								end
+							end
+						end
+					end
+					-- prep for next scanline
 					e.x+=e.dx
 				end
 			end
+			-- yuck
+			local tmp={}
+			for _,v in pairs(aet) do
+				if(v)add(tmp,v)
+			end
+			aet=tmp
+			--pset(127,y,y)
+			--flip()		
 		end
-
 		-- reset
 		ymin,ymax=32000,-32000
 		edges={}
@@ -99,7 +152,20 @@ function _update()
 	local x0,y0=rotate(24,24)
 	local x1,y1=rotate(96,48)
 	local x2,y2=rotate(48,112)
+	raz:add({{x0,y0},{x1,y1},{x2,y2}},7,1)
+
+	cc,ss=cos(angle+0.5),-sin(angle+0.5)
+	local x0,y0=rotate(24,24)
+	local x1,y1=rotate(96,48)
+	local x2,y2=rotate(48,112)
 	raz:add({{x0,y0},{x1,y1},{x2,y2}},8,0)
+
+
+	cc,ss=cos(angle+0.75),-sin(angle+0.75)
+	local x0,y0=rotate(24,24)
+	local x1,y1=rotate(96,48)
+	local x2,y2=rotate(48,112)
+	raz:add({{x0,y0},{x1,y1},{x2,y2}},9,3)
 end
 
 function _draw()
