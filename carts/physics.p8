@@ -555,7 +555,7 @@ function make_car(p,angle)
 	local forces,torque={0,0,0},0
 
 	local is_braking=false
-	local max_rpm=0.6
+	local max_rpm=0.55
 	local steering_angle=0
 	local sliding_t=0
 
@@ -677,7 +677,7 @@ function make_car(p,angle)
 			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
 
 			-- rear wheels sliding?
-			if not full_slide and rps>10 and effective_rps/rps<0.8 then
+			if not full_slide and rps>10 and effective_rps/rps<0.6 then
 				skidmark_emitters[3](self:apply(v[3]))
 				skidmark_emitters[4](self:apply(v[4]))
 			end
