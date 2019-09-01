@@ -1270,7 +1270,6 @@ end
 -- unpack an array of bytes
 function unpack_array(fn)
 	local n=unpack_variant()
-	printh(n)
 	for i=1,n do
 		fn(i)
 	end
@@ -1424,7 +1423,6 @@ function unpack_track()
 	-- voxels: collision and rendering optimization
 	unpack_array(function()
 		local id,faces,solid_faces=unpack_variant(),{},{}
-		printh("voxel: "..id)
 		unpack_array(function()
 			local f=model.f[unpack_variant()]
 			add(faces,f)
