@@ -5,18 +5,328 @@ __lua__
 -- @freds72
 -- assets: sega
 
+-- vector & tools
 function lerp(a,b,t)
 	return a*(1-t)+b*t
 end
 
-function printb(s,x,y,c)
-	x=x or 64-(#s*2.5)
-    for i=-1,1 do
-        for j=-1,1 do
-            print(s,x+i,y+j,0)
-        end
-    end
-    print(s,x,y,c)
+function smoothstep(t)
+	t=mid(t,0,1)
+	return t*t*(3-2*t)
+end
+
+function make_v(a,b)
+	return {
+		b[1]-a[1],
+		b[2]-a[2],
+		b[3]-a[3]}
+end
+function v_clone(v)
+	return {v[1],v[2],v[3]}
+end
+function v_dot(a,b)
+	return a[1]*b[1]+a[2]*b[2]+a[3]*b[3]
+end
+function v_scale(v,scale)
+	v[1]*=scale
+	v[2]*=scale
+	v[3]*=scale
+end
+function v_add(v,dv,scale)
+	scale=scale or 1
+	v[1]+=scale*dv[1]
+	v[2]+=scale*dv[2]
+	v[3]+=scale*dv[3]
+end
+-- safe vector length
+function v_len(v)
+	local x,y,z=v[1],v[2],v[3]
+	local d=max(max(abs(x),abs(y)),abs(z))
+	if(d<0.001) return 0
+	x/=d
+	y/=d
+	z/=d
+	return d*(x*x+y*y+z*z)^0.5
+end
+function v_normz(v)
+	local d=v_dot(v,v)
+	if d>0.001 then
+		d=d^.5
+		v[1]/=d
+		v[2]/=d
+		v[3]/=d
+	end
+	return d
+end
+function v_cross(a,b)
+	local ax,ay,az=a[1],a[2],a[3]
+	local bx,by,bz=b[1],b[2],b[3]
+	return {ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx}
+end
+
+function v_lerp(a,b,t)
+	return {
+		lerp(a[1],b[1],t),
+		lerp(a[2],b[2],t),
+		lerp(a[3],b[3],t)
+	}
+end
+function v_cross(a,b)
+	local ax,ay,az=a[1],a[2],a[3]
+	local bx,by,bz=b[1],b[2],b[3]
+	return {ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx}
+end
+-- x/z orthogonal vector
+function v2_ortho(a,scale)
+	return {-scale*a[1],0,scale*a[3]}
+end
+
+local v_up={0,1,0}
+
+-- quaternion
+function make_q(v,angle)
+	angle/=2
+	-- fix pico sin
+	local s=-sin(angle)
+	return {v[1]*s,
+	        v[2]*s,
+	        v[3]*s,
+	        cos(angle)}
+end
+function q_clone(q)
+	return {q[1],q[2],q[3],q[4]}
+end
+
+function q_x_q(a,b)
+	local qax,qay,qaz,qaw=a[1],a[2],a[3],a[4]
+	local qbx,qby,qbz,qbw=b[1],b[2],b[3],b[4]
+        
+	a[1]=qax*qbw+qaw*qbx+qay*qbz-qaz*qby
+	a[2]=qay*qbw+qaw*qby+qaz*qbx-qax*qbz
+	a[3]=qaz*qbw+qaw*qbz+qax*qby-qay*qbx
+	a[4]=qaw*qbw-qax*qbx-qay*qby-qaz*qbz
+end
+function m_from_q(q)
+	local x,y,z,w=q[1],q[2],q[3],q[4]
+	local x2,y2,z2=x+x,y+y,z+z
+	local xx,xy,xz=x*x2,x*y2,x*z2
+	local yy,yz,zz=y*y2,y*z2,z*z2
+	local wx,wy,wz=w*x2,w*y2,w*z2
+
+	return {
+		1-(yy+zz),xy+wz,xz-wy,0,
+		xy-wz,1-(xx+zz),yz+wx,0,
+		xz+wy,yz-wx,1-(xx+yy),0,
+		0,0,0,1}
+end
+
+-- matrix functions
+function m_x_v(m,v)
+	local x,y,z=v[1],v[2],v[3]
+	return {m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]}
+end
+function m_clone(m)
+	local c={}
+	for k,v in pairs(m) do
+		c[k]=v
+	end
+	return c
+end
+function make_m_from_euler(x,y,z)
+		local a,b = cos(x),-sin(x)
+		local c,d = cos(y),-sin(y)
+		local e,f = cos(z),-sin(z)
+  
+  -- yxz order
+  local ce,cf,de,df=c*e,c*f,d*e,d*f
+	 return {
+	  ce+df*b,a*f,cf*b-de,0,
+	  de*b-cf,a*e,df+ce*b,0,
+	  a*d,-b,a*c,0,
+	  0,0,0,1}
+end
+function make_m_from_v_angle(up,angle)
+	local fwd={-sin(angle),0,cos(angle)}
+	local right=v_cross(up,fwd)
+	v_normz(right)
+	fwd=v_cross(right,up)
+	return {
+		right[1],right[2],right[3],0,
+		up[1],up[2],up[3],0,
+		fwd[1],fwd[2],fwd[3],0,
+		0,0,0,1
+	}
+end
+
+function make_m_lookat(from,to)
+	local fwd=make_v(from,to)
+	v_normz(fwd)
+	local right=v_cross(v_up,fwd)
+	v_normz(right)
+	local up=v_cross(fwd,right)
+	return {
+		right[1],right[2],right[3],0,
+		up[1],up[2],up[3],0,
+		fwd[1],fwd[2],fwd[3],0,
+		0,0,0,1
+	}
+end
+
+-- only invert 3x3 part
+function m_inv(m)
+	m[2],m[5]=m[5],m[2]
+	m[3],m[9]=m[9],m[3]
+	m[7],m[10]=m[10],m[7]
+end
+function m_set_pos(m,v)
+	m[13],m[14],m[15]=v[1],v[2],v[3]
+end
+-- returns basis vectors from matrix
+function m_right(m)
+	return {m[1],m[2],m[3]}
+end
+function m_up(m)
+	return {m[5],m[6],m[7]}
+end
+function m_fwd(m)
+	return {m[9],m[10],m[11]}
+end
+
+-- coroutine helper
+function corun(f)
+	local cs=costatus(f)
+	if cs=="suspended" then
+		assert(coresume(f))
+		return f
+	end
+	return nil
+end
+
+-- sort
+-- https://github.com/morgan3d/misc/tree/master/p8sort
+-- 
+function sort(data)
+ local n = #data 
+ if(n<2) return
+ 
+ -- form a max heap
+ for i = flr(n / 2) + 1, 1, -1 do
+  -- m is the index of the max child
+  local parent, value, m = i, data[i], i + i
+  local key = value.key 
+  
+  while m <= n do
+   -- find the max child
+   if ((m < n) and (data[m + 1].key > data[m].key)) m += 1
+   local mval = data[m]
+   if (key > mval.key) break
+   data[parent] = mval
+   parent = m
+   m += m
+  end
+  data[parent] = value
+ end 
+
+ -- read out the values,
+ -- restoring the heap property
+ -- after each step
+ for i = n, 2, -1 do
+  -- swap root with last
+  local value = data[i]
+  data[i], data[1] = data[1], value
+
+  -- restore the heap
+  local parent, terminate, m = 1, i - 1, 2
+  local key = value.key 
+  
+  while m <= terminate do
+   local mval = data[m]
+   local mkey = mval.key
+   if (m < terminate) and (data[m + 1].key > mkey) then
+    m += 1
+    mval = data[m]
+    mkey = mval.key
+   end
+   if (key > mkey) break
+   data[parent] = mval
+   parent = m
+   m += m
+  end  
+  
+  data[parent] = value
+ end
+end
+
+local sessionid,cam=0
+local all_models={}
+local k_far,k_near=0,2
+local k_right,k_left=4,8
+local z_near=0.05
+
+-- camera
+function make_cam()
+	-- views
+	local switching_async
+	-- 0: far
+	-- 1: close
+	local view_mode=1
+	-- view offset/angle/lag
+	local view_pov={
+		{-2.2,1.5,0.2},
+		{-0.7,0.3,0.1}
+	}
+	local current_pov=v_clone(view_pov[view_mode+1])
+
+	local t=0
+	return {
+		pos={0,0,0},
+		angle=0,
+		update=function(self)
+			t+=1
+			if switching_async then
+				switching_async=corun(switching_async)
+			elseif t%120>30 then
+				local next_mode=(view_mode+1)%#view_pov
+				local next_pov=v_clone(view_pov[next_mode+1])
+				switching_async=cocreate(function()
+					for i=0,29 do
+						local t=smoothstep(i/30)
+						current_pov=v_lerp(view_pov[view_mode+1],next_pov,t)
+						yield()
+					end
+					-- avoid drift
+					current_pov,view_mode=next_pov,next_mode
+				end)
+			end
+		end,
+		track=function(self,from,to)
+			-- lerp position
+			local pos=v_lerp(self.pos,from,current_pov[3])
+			-- v_normz(up)
+
+			-- shift cam position			
+			local m=make_m_lookat(from,to)
+			-- v_add(pos,m_fwd(m),current_pov[1])
+			
+			-- inverse view matrix
+			m_inv(m)
+		 	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
+			self.pos,self.m=pos,m
+		end,
+		project_poly=function(self,p,c)
+			local p0,p1=p[1],p[2]
+			-- magic constants = 89.4% vs. 90.9%
+			-- shl = 79.7% vs. 80.6%
+			local x0,y0=63.5+flr(shl(p0[1]/p0[3],6)),63.5-flr(shl(p0[2]/p0[3],6))
+			local x1,y1=63.5+flr(shl(p1[1]/p1[3],6)),63.5-flr(shl(p1[2]/p1[3],6))
+			for i=3,#p do
+				local p2=p[i]
+				local x2,y2=63.5+flr(shl(p2[1]/p2[3],6)),63.5-flr(shl(p2[2]/p2[3],6))
+				trifill(x0,y0,x1,y1,x2,y2,c)
+				x1,y1=x2,y2
+			end
+		end
+	}
 end
 
 -- game states
@@ -28,11 +338,48 @@ end
 
 function title_state()
 	local vrtext="711111117777777711117777111111117771111177777777111111771111111177777711777777777777777711777777111111111111111111111111111111111111111177777777111177771111111177711111777777771111111711111111777777117777777777777777777777771111111711111111111111111111111111111111777777771111777711111111777111117777777711111117111111117777771177777777777777777777777711111777111111111111111111111111111111117777777711177777111111117777111177777777111111171111111177777711777777777777777777777777111177771111111111111111111111111111111177777771111777771111111177771111777777771111111111111111777777117777777777777777777777771117777711111111111111111111111111111111777777711117777711111111777711117777777711111111111111117777771177777777777777777777777711777777111111111111111111111111111111117777777111777777111111117777711177777777111111111111111177777711777777777777777777777777117777771111111111111111111111111111111177777711117777771111111177777111177777771111111111111111777777117777777777777777777777771777777711111111111111111111111111111111777777111177777711111111777771111777777711111111111111117777771177777777777777777777777717777777111111111111111111111111111111117777711117777777111111117777771111777777111111111111111177777711117777771111111177777771177777771111111111111111111111111111111177777111177777771111111177777711117777771111111111111111777777111177777711111111777771111777777711111111111111111111111111111111777771111777777711111111777777111177777711111111111111117777771111777777111111117777711117777777111111111111111111111111111111117777111177777777111111117777777111177777111111111111111177777711117777771111111177777111177777771111111111111111111111111111111177771111777777771111111177777771111777771111111111111111777777111177777711111111777777111777777711111111111111111111111111111111777711117777777711111111777777711117777711111111111111117777771111777777111111117777777717777777111111111111111111111111111111117771111177777777111111117777777111117777111111111111111177777711777777777777777777777777117777771111111111111111111111111111111177711111777777771111111777777777111177771111111111111111777777117777777777777777777777771177777711111111111111111111111111111111777111117777777711111117777777771111177711111111111111117777771177777777777777777777777711177777111111111111111111111111111111117711111177777777111111177777777711111777111111111111111177777711777777777777777777777777111177771111111111111111111111111111111177111111777777777111117777777777111117771111111111111111777777117777777777777777777777771111177711111111111111111111111111111111711111117777777771111177777777771111117711111111111111117777771177777777777777777777777711111177111111111111111111111111111111117111111177777777711111777777777711111177111111111111111177777711777777777777777777777777111111111111111111111111111111111111111171111111777777777711177777777777111111771111111111111111777777117777777777777777117777771111111111111111111111111111111111111111111111117777777777111777777777771111111711111111111111117777771177777777777777771777777711111111111111111111111111111111111111111111111177777777771117777777777711111117111111111111111177777711117777777777771177777777111111171111111111111111111111111111111111111111777777777771177777777777111111111111111111111111777777111177777777771111777777771111111711111111111111111111111111111111111111117777777177717777777777771111111111111111111111117777771111777777777111117777777711111177111111111111111111111111111111111111111177777771777177777777777711111111111111111111111177777711117777777711111177777777111117771111111111111111111111111111111111111111777777117771777717777777111111111111111111111111777777111177777777111111777777771111177711111111111111111111111111111111111111117777771177777777177777777711111177777777111111177777771111777777711111117777777711117777777111117777777711111111111111111111111177777711777777771777777777111111777777771111111777777711117777777111111177777777111177777771111177777777111111111111111111111111777771117777777711777777771111117777777711111117777777111177777711111111777777771117777777711111777777771111111111111111111111117777711177777777117777777711111177777777111111177777771111777777111111117777777111777777777111117777777711111111111111111111111177777111777777771177777777111111777777771111111777777711117777771111111177777771117777777771111177777777111111111111111111111111777711117777777711177777771111117777777711111117777777111177777711111111777777111777777777711111777777771111111111111111111111117777111177777777111777777711111177777777111111177777771111777777111111117777771117777777777111117777777711111111111111111111111177711111777777771111777777111111777777771111111777777711117777771111111177777111777777777771111177777777111111111111111111111111777111117777777711117777771111117777777711111117777777111177777711111111777771117777777777711117777777771111111111111111111111117771111177777777111177777711111177777777111111177777771111777777111111117777111177777777777111177777777711111111"
+	local angle=0
+	local t=0
+	local cam_pos={5,1,0}
 	return
 		-- draw
 		function()
-			cls(1)
+			cls(0)
 
+			local out={}
+			-- track
+			for i=-1,1 do
+				local m={
+					1,0,0,0,
+					0,1,0,0,
+					0,0,1,0,
+					0,0,12*0.75*i-0.75*((12*time())%12),1}
+				collect_model_faces(all_models["track"],m,nil,out)
+			end
+
+			sort(out)
+			draw_faces(out)
+
+			-- car
+			out={}
+			local wheel_m=make_m_from_euler(time(),0,0)
+			local actor={
+				rrw=wheel_m,
+				lrw=wheel_m,
+				lfw=wheel_m,
+				rfw=wheel_m
+			}
+			local m={
+				1,0,0,0,
+				0,1,0,0,
+				0,0,1,0,
+				0,0,0,1}
+			collect_model_faces(all_models["car"],m,actor,out)
+
+			sort(out)
+			draw_faces(out)
+
+			--[[
 			local mem=0x6000+64*43
 			for i=1,#vrtext,8 do
 				poke4(mem,tonum("0x"..sub(vrtext,i,i+3).."."..sub(vrtext,i+4,i+7)))
@@ -45,12 +392,19 @@ function title_state()
 			sspr(55,64,54,12,16,49)
 			sspr(55,76,59,15,53,64)
 			-- print("virtua\nracing",48,60,7)
+			]]
 		end,
 		-- update
 		function()
+			t+=1
 			if btnp(4) or btnp(5) then
 				next_state(selection_state)
 			end
+			if t%120==0 then
+				cam_pos={rnd(4)-2,2,rnd(4)-2}
+			end
+			local angle=time()/4			
+			cam:track({-sin(angle),0.5,cos(angle)},{0,0,0})
 		end
 end
 
@@ -105,7 +459,10 @@ function selection_state()
 end
 
 function _init()
-	-- init state machine
+	unpack_models()
+	cam=make_cam()
+
+	-- init state machine	
 	next_state(title_state)
 end
 
@@ -117,6 +474,403 @@ end
 function _draw()
 	draw_state()
 end
+
+-->8
+-- unpack data & models
+local mem=0x2000
+function mpeek()
+	local v=peek(mem)
+	mem+=1
+	return v
+end
+
+-- w: number of bytes (1 or 2)
+function unpack_int(w)
+  	w=w or 1
+	local i=w==1 and mpeek() or bor(shl(mpeek(),8),mpeek())
+	return i
+end
+-- unpack 1 or 2 bytes
+function unpack_variant()
+	local h=mpeek()
+	-- above 127?
+	if band(h,0x80)>0 then
+		h=bor(shl(band(h,0x7f),8),mpeek())
+	end
+	return h
+end
+-- unpack a float from 1 byte
+function unpack_float(scale)
+	local f=shr(unpack_int()-128,5)
+	return f*(scale or 1)
+end
+-- unpack a double from 2 bytes
+function unpack_double(scale)
+	local f=(unpack_int(2)-16384)/128
+	return f*(scale or 1)
+end
+-- unpack an array of bytes
+function unpack_array(fn)
+	local n=unpack_variant()
+	printh(n)
+	for i=1,n do
+		fn(i)
+	end
+end
+-- unpack a vector
+function unpack_v(scale)
+	return {unpack_double(scale),unpack_double(scale),unpack_double(scale)}
+end
+
+-- valid chars for model names
+local itoa='_0123456789abcdefghijklmnopqrstuvwxyz'
+function unpack_string()
+	local s=""
+	unpack_array(function()
+		local c=unpack_int()
+		s=s..sub(itoa,c,c)
+	end)
+	return s
+end
+
+function unpack_face()
+	local f={flags=unpack_int(),c=unpack_int()}
+	if(f.c==0x50) f.c=0x0150
+	f.c+=0x1000.a5a5
+
+	f.ni=band(f.flags,2)>0 and 4 or 3
+	-- vertex indices
+	-- quad?
+	for i=1,f.ni do
+		-- using the face itself saves more than 500KB!
+		f[i]=unpack_variant()
+	end
+	return f
+end
+
+function unpack_model(model,scale)
+	-- vertices
+	unpack_array(function()
+		add(model.v,unpack_v(scale))
+	end)
+
+	-- faces
+	unpack_array(function()
+		local f=unpack_face()
+		-- inner faces?
+		if band(f.flags,8)>0 then
+			f.inner={}
+			unpack_array(function()
+				add(f.inner,unpack_face())
+			end)
+		end		
+		-- normal
+		f.n=unpack_v()
+		-- viz check
+		f.cp=v_dot(f.n,model.v[f[1]])
+
+		add(model.f,f)
+	end)
+end
+function unpack_models()
+	-- for all models
+	unpack_array(function()
+		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
+		scale*=0.75
+		unpack_array(function()
+			local d=unpack_double()
+			assert(d<127,"lod distance too large:"..d)
+			-- store square distance
+			add(model.lod_dist,d*d)
+		end)
+  
+		-- level of details models
+		unpack_array(function()
+			local lod={v={},f={},vgroups={}}
+			unpack_model(lod,scale)
+			-- unpack vertex groups (as sub model)
+			unpack_array(function()				
+				local name=unpack_string()
+				local vgroup={offset=unpack_v(scale),f={}}
+				-- faces
+				unpack_array(function()
+					local f=unpack_face()
+					-- normal
+					f.n=unpack_v()
+					-- viz check
+					f.cp=v_dot(f.n,lod.v[f[1]])
+
+					add(vgroup.f,f)
+				end)				
+				lod.vgroups[name]=vgroup
+			end)
+		
+			add(model.lods,lod)
+		end)
+
+		-- index by name
+		all_models[name]=model
+	end)
+end
+
+-->8
+-- trifill & clipping
+-- by @p01
+function p01_trapeze_h(l,r,lt,rt,y0,y1)
+  lt,rt=(lt-l)/(y1-y0),(rt-r)/(y1-y0)
+  if(y0<0)l,r,y0=l-y0*lt,r-y0*rt,0
+  for y0=y0,min(y1,127) do
+   rectfill(l,y0,r,y0)
+   l+=lt
+   r+=rt
+  end
+end
+function p01_trapeze_w(t,b,tt,bt,x0,x1)
+ tt,bt=(tt-t)/(x1-x0),(bt-b)/(x1-x0)
+ if(x0<0)t,b,x0=t-x0*tt,b-x0*bt,0
+ for x0=x0,min(x1,127) do
+  rectfill(x0,t,x0,b)
+  t+=tt
+  b+=bt
+ end
+end
+
+function trifill(x0,y0,x1,y1,x2,y2,col)
+ color(col)
+ if(y1<y0)x0,x1,y0,y1=x1,x0,y1,y0
+ if(y2<y0)x0,x2,y0,y2=x2,x0,y2,y0
+ if(y2<y1)x1,x2,y1,y2=x2,x1,y2,y1
+ if max(x2,max(x1,x0))-min(x2,min(x1,x0)) > y2-y0 then
+  col=x0+(x2-x0)/(y2-y0)*(y1-y0)
+  p01_trapeze_h(x0,x0,x1,col,y0,y1)
+  p01_trapeze_h(x1,col,x2,x2,y1,y2)
+ else
+  if(x1<x0)x0,x1,y0,y1=x1,x0,y1,y0
+  if(x2<x0)x0,x2,y0,y2=x2,x0,y2,y0
+  if(x2<x1)x1,x2,y1,y2=x2,x1,y2,y1
+  col=y0+(y2-y0)/(x2-x0)*(x1-x0)
+  p01_trapeze_w(y0,y0,y1,col,x0,x1)
+  p01_trapeze_w(y1,col,y2,y2,x1,x2)
+ end
+end
+
+--[[
+function trifill(x0,y0,x1,y1,x2,y2,col)
+	line(x0,y0,x1,y1,col)
+	line(x2,y2)
+	line(x0,y0)
+end
+]]
+
+-->8
+-- 3d
+function collect_faces(faces,cam_pos,v_cache,out,dist)
+	local n=#out+1
+	for _,face in pairs(faces) do
+		-- avoid overdraw for shared faces
+		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
+			local z,y,outcode,verts,is_clipped=0,0,0xffff,{},0
+			-- debug
+			local center={0,0,0}
+			-- project vertices
+			for ki=1,face.ni do
+				local a=v_cache[face[ki]]
+				y+=a[2]
+				z+=a[3]
+				v_add(center,a)
+				outcode=band(outcode,a.outcode)
+				-- behind near plane?
+				is_clipped+=band(a.outcode,2)
+				verts[ki]=a
+			end
+			-- mix of near/far verts?
+			if outcode==0 then
+	   			-- average before changing verts
+				y/=#verts
+				z/=#verts
+				-- debug
+				v_scale(center,1/#verts)
+
+				-- mix of near+far vertices?
+				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+				if #verts>2 then
+					out[n]={key=1/(y*y+z*z),f=face,v=verts,dist=dist,center=center}
+				 	-- 0.1% faster vs [#out+1]
+				 	n+=1
+				end
+			end
+			face.session=sessionid	
+		end
+	end
+end
+
+function collect_model_faces(model,m,parts,out)
+	-- all models reuses the same faces!!
+	sessionid+=1
+	-- cam pos in object space
+	local p,cm={},cam.m
+	-- vertex group matrix
+	-- using close to avoid repeating the cache function
+	local vgm
+	local cx,cy,cz=cm[13],cm[14],cm[15]
+	local x,y,z=-cx-m[13],-cy-m[14],-cz-m[15]
+	local cam_pos={
+		m[1]*x+m[2]*y+m[3]*z,
+		m[5]*x+m[6]*y+m[7]*z,
+		m[9]*x+m[10]*y+m[11]*z}
+	
+	-- select lod
+	local d=v_dot(cam_pos,cam_pos)
+	
+	-- lod selection
+	local lodid=0
+	for i=1,#model.lod_dist do
+		if(d>model.lod_dist[i]) lodid+=1
+	end
+	
+	model=model.lods[min(lodid,#model.lods-1)+1]
+	
+	local v_cache={
+		__index=function(t,k)
+			local a=model.v[k]
+			-- relative to vgroup
+			if vgm then
+				a=m_x_v(vgm,a)
+			end
+			-- relative to world
+			a=m_x_v(m,a)
+			-- world to cam
+			local ax,ay,az=a[1]+cx,a[2]+cy,a[3]+cz
+			ax,ay,az=cm[1]*ax+cm[5]*ay+cm[9]*az,cm[2]*ax+cm[6]*ay+cm[10]*az,cm[3]*ax+cm[7]*ay+cm[11]*az
+			local outcode=az>z_near and k_far or k_near
+			if ax>az then outcode+=k_right
+			elseif -ax>az then outcode+=k_left
+			end	
+			local a={ax,ay,az,outcode=outcode}
+
+			t[k]=a
+			return a
+		end
+	}
+	setmetatable(p,v_cache)
+	-- main model
+	collect_faces(model.f,cam_pos,p,out)
+	-- sub models	
+	local m_orig=m_clone(m) 
+	for name,vgroup in pairs(model.vgroups) do
+		-- get world group position
+		local pos=m_x_v(m_orig,vgroup.offset)		
+		m_set_pos(m,pos)
+		
+		-- lookup vertex group orientation from parts
+		vgm=parts[name]
+
+		-- cam to vgroup space
+		local x,y,z=cam_pos[1]-vgroup.offset[1],cam_pos[2]-vgroup.offset[2],cam_pos[3]-vgroup.offset[3]
+		local vg_cam_pos={vgm[1]*x+vgm[2]*y+vgm[3]*z,vgm[5]*x+vgm[6]*y+vgm[7]*z,vgm[9]*x+vgm[10]*y+vgm[11]*z}
+
+		collect_faces(vgroup.f,vg_cam_pos,p,out)
+	end
+end
+
+function draw_faces(faces,v_cache)
+	for i=1,#faces do
+		local d=faces[i]
+		cam:project_poly(d.v,d.f.c)
+		-- details?
+		if d.key>0.0200 then
+			-- face details
+			if d.f.inner then -- d.dist<2 then					
+				for _,face in pairs(d.f.inner) do
+					local verts,outcode,is_clipped={},0xffff,0
+					for ki=1,face.ni do
+						local a=v_cache[face[ki]]
+						outcode=band(outcode,a.outcode)
+						-- behind near plane?
+						is_clipped+=band(a.outcode,2)
+						verts[ki]=a
+					end
+					if outcode==0 then
+						if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+						if(#verts>2) cam:project_poly(verts,face.c)
+					end
+				end
+			end			
+		end
+		-- debug
+		--[[
+		if d.center then
+			local x0,y0=63.5+flr(shl(d.center[1]/d.center[3],6)),63.5-flr(shl(d.center[2]/d.center[3],6))
+			local n=v_clone(d.f.n)
+			v_add(n,d.center,2)
+			local x1,y1=63.5+flr(shl(n[1]/n[3],6)),63.5-flr(shl(n[2]/n[3],6))
+			line(x0,y0,x1,y1,8)
+		end
+		]]
+	end
+end
+
+function z_poly_clip(znear,v)
+	local res={}
+	local v0,v1,d1,t,r=v[#v]
+	local d0=-znear+v0[3]
+ 	-- use local closure
+ 	local clip_line=function()
+ 		local r,t=make_v(v0,v1),d0/(d0-d1)
+ 		v_scale(r,t)
+ 		v_add(r,v0)
+ 		res[#res+1]=r
+ 	end
+	for i=1,#v do
+		v1=v[i]
+		d1=-znear+v1[3]
+		if d1>0 then
+			if(d0<=0) clip_line()
+			res[#res+1]=v1
+		elseif d0>0 then
+   clip_line()
+		end
+		v0,d0=v1,d1
+	end
+	return res
+end
+
+-->8
+-- print helpers
+
+-- bold print
+function printb(s,x,y,c)
+	x=x or 64-(#s*2.5)
+    for i=-1,1 do
+        for j=-1,1 do
+            print(s,x+i,y+j,0)
+        end
+    end
+    print(s,x,y,c)
+end
+
+-- print sprite sx/sy at y on screen
+-- x centered
+-- perspective correct rotation by angle
+function print3d(sx,sy,sw,sh,y,angle)
+	local cc,ss=cos(angle),-sin(angle)
+	local z0,z1=2+cc,2-cc
+	-- projection
+ 	local y0,y1,w0,w1=-sh*ss/z0,sh*ss/z1,sw/z0,sw/z1
+ 	if(y0>y1)y0,y1,w0,w1=y1,y0,w1,w0
+ 	local len=y1-y0
+	-- perspective correct mapping
+	palt(14,true)
+	palt(0,false)
+ 	local u,du,dw=0,sh*w1/len,(w1-w0)/len
+ 	for y=y+y0,y+y1-0.5 do
+ 		sspr(sx,sy+u/w0,sw,1,63.5-w0,y,2*w0,1)
+  		u+=du
+  		w0+=dw
+ 	end
+	palt()
+end
+
 __gfx__
 33333333333bbbbbbbb33bbbbb3bb3bbbbbbb33b333333333333334f41333331111fff4333333333333333333344113113333333333300000000000000000000
 33333333333bbbbb3333333b3bbbbbbbbbbbb3b333333333333333333ff5111115fff433333333333333333333f4411111133333333300000000000000000000
@@ -231,3 +985,32 @@ fffff6ff446666664445555555333333554446444666446445433300000000000000000000000000
 6666f66f666ff644444444444644464454466f646666646444444400000000000000000000000000000000000000000000000000000000000000000000000000
 66666f6ff6f6fffff444444444444444444446666666f44464544600000000000000000000000000000000000000000000000000000000000000000000000000
 __map__
+02030e0c1d1402401340660173415c405543a8415c40e74284415c40324284415c403243a83ea4403243a83ea4403242843ea440e742843ea4405543a840e440ae3c9040e440903bae40e441cf3bae40e441cf3c903f1c41cf3bae40e640e73c903f1a40e73c903f1a41953bae40e641953bae40e641953c903f1a41953c903f
+1c41cf3c903f1c40903bae3f1c40ae3c9040e640e73bae3f1a40e73bae3f9a40003f5b3f9a408f3fae4066408f40524066408f3fae3f9a3f713fae40663f714052406640003f5b40663f713fae3f9a3f7140524066400040a53f9a400040a53f9a408f40523f8040cc3ebc3fd4417a3e98408040cc3ebc404d40de40bd400040
+4843903eb240a33e96408a4021403440b040213d343f5040213d34414e40a33e963ede40b53f94407c40623c063f0040923d98414e40213e8c3eb240213e8c412240b53f943ede40213f943f76402140343f9f40de4034401e41923f893f8640d53f893faf40a13d343f0040213d833f8440623c06410040923d98406140de40
+34405140a13d343fe241923f89407a40d53f89400041323d6c402c417a3e983fb340de40bd412240213f944000409b3bf0410040213d83406640003f5b4066408f3fae3f9a408f40523f9a408f3fae40663f713fae3f9a3f7140523f9a40003f5b3f9a3f713fae40663f7140523f9a400040a54066400040a54066408f40523f
+9a40003f5b3f9a408f3fae4066408f40524066408f3fae3f9a3f713fae40663f714052406640003f5b40663f713fae3f9a3f7140524066400040a53f9a400040a53f9a408f4052406640003f5b4066408f3fae3f9a408f40523f9a408f3fae40663f713fae3f9a3f7140523f9a40003f5b3f9a3f713fae40663f7140523f9a40
+0040a54066400040a54066408f40523e1d40003bdb41e340003bdb3e1d40003d2541e340003d253e1d400040db41e3400040db3e1d4000422541e3400042252c0311010203044080400040000311050607083f80400040000388090a0b0c3f80400040000388140d151640804000400003280e17180f40003f80400003771011
+121340004080400000663f2743407340343fec00114428294000407d401a00772e343e4017407e3ffb00772a25373fe8407e3ffc00283c463a3fc840723ff00088302c3f4067404d3fff02662e3d4732407a40053fdb02663245342e407e3fff401502662a2f35333f823fff40150266333b312a3f8640053fdb001630463c40
+003fd23f8802772a313a253feb407d3ff00077372f2a3fe9407e3ffb0200452b3e344057400b405d02002f3736353fa9400b405d0266363744293f84401a4013026638413940400040004080026629283e2b407c401a401302883a313b2d3fb840253f9d00283f4630403840723ff000883a2d3c3f99404d3fff02553c2d2c30
+40003f833fe502882c473d3f404840253f9d025539412844400040803ffc00772e3e274018407e3ffc0277273f3d2e4015407d3ff00066253a263f8d40343fec0028423a463f9840453fe50028463f42406840453fe50277384026434000407f3ff300884326424000407c3fe20266432741384073403840010088423f434067
+40463fe00266252640393f8d40384001008842263a3f9940463fe003770306050440003f80400003506c6d6f6e4000408040000350707173724000408040000403171d223e8240903c800a0255555f5e543f8040004000020555545a57400040403f91025556575a5d40804000400002555e5c58543f8040004000025554585b
+5a40003fc03f910255595d5a5b4080400040000205585c595b40003f80400002555c5e5d5940003fc0406f02055e5f565d40004040406f02555f555756400040804000031711223e82409041800a02551a2423193f804000400002051a191f1c400040403f9102551b1c1f22408040004000025523211d193f80400040000255
+191d201f40003fc03f9102551e221f2040804000400002051d211e2040003f80400002552123221e40003fc0406f020523241b2240004040406f0255241a1c1b400040804000031d1122417e409041800a0255494852534080400040000205494b4e48400040403f9102554a514e4b3f8040004000025552484c504080400040
+000255484e4f4c40003fc03f9102554d4f4e513f804000400002054c4f4d5040003f8040000255504d515240003fc0406f020552514a5340004040406f0255534a4b49400040804000031d1d22417e40903c800a025561606a6b408040004000020561636660400040403f910255626966633f804000400002556a6064684080
+4000400002556066676440003fc03f910255656766693f804000400002056467656840003f80400002556865696a40003fc0406f02056a69626b40004040406f02556b626361400040804000051f1d0c0e16010150000180bb3f094001400040f9400140003ebe401040003ed9400040003d3e402f40003f2f4001400040cf40
+01400040f9400142013f094001420141434010400042c1402f400042c1403041ff3ed9400441ff412a400040003e31405f40d53e65401541173e9e405f41603e65413541173dfd4071405d3e45401540683e83407140713e45416340683d0e407f415e3d4a402a41ab3d8d407941fa3d4a40fc41aa3c10408440513c32402a40
+b33c57407441013c32415840b23d34408240833d69402a40c23da4406e410d3d69411040c641e14060407141bb400f40c841944052411f41bb414340c84189404e41c041bd400f41a7421d404e417c41bd410f41a742d4404f41c942fc4011418a43254050415642fc416b4187438a4050417443b24011414a43db4048410343
+b2413d4137425d4059410e4286401140dd42af405040a94286418240e1430d4050407b4337401140544363404f40194337414940573f2f400142013f34400140003ffe400141633ffe400140c34004400140c340044001416340d4400140003ed9400543ff4143401041ff3d3e401f41fe3ebe401041fe4129400441ff414340
+1043ff3eb14045429b3e4d401042733e05404542573e4d415242733e194046438b3dfe401043303de8404642dd3dfe413043303c7a408242543cb4402a428f3cf4406d42e03cb4415d42963d44408442373d7e402a42853dbf406e42cb3d7e411342843c11407242bf3c37402a43023c61406e43573c37410b42ff41f8404b42
+c641ae40174305415f404b434a41ae412e43054242406e41d742244017421e41ff406e427442244147421e4353404643d3437740114397439c4040435d43774178438742874050439742aa4011436942cd4048432742aa4153436442c4405042bf42ee401142974319404d424d42ee4144429843d2404842f543ea401142bc43
+ff4048426e43ea417142ae3ffe400143453ffe400142a54004400142a54004400143453f34400142013f344001440140cf4001440140cf4001420140d44001420140d4400144013f094001440140f94001440141434010460042c1402f43ff3d3e402f43fe3ebe401143fe3ebe401046003ed84004460041294004460040f940
+0146004129400543ff3db4405d44033dc1400c44493dd1405d448b3dc1414c44493e4a404f44c03e73400c44f43eab404f453d3e73411e44f43c29406d449c3c66402a44de3caa406e45213c66411d44d73d7e408244a13da7402a44e93dd44089453d3da7415144e93c94408143a33cc8402a43f03d02406744263cc8414e43
+f5416940464480419e4019443841cb404643fa419e414a443841ed405044d341bc401944f7418f4050451f41bc412f44f743a5401145a343c44050456843a5417345a1426e405045a9428f4011457a42af4050452f428f414145774275405044b442984011447142ba4057442042984153446e3f2f400146003f2f400144013f
+fe400145273ffe4001448740044001448740044001452740cf4001460040d4400146003f094001460042c1402f46003d3d402f46003f34400146003d02ab090d0401400240803fff03990809010240004080400002aa430a0b0c3ff64080400002ab4405034540084080400202ee4503040d403d4071400002aa020e46083ffe
+40803fff02ee460e0a433fc14070400003bc0f101112406440003fb103bb13141516401340003f8103cc1718191a406340003faf036c1b1c1d1e407740003fd1036c1f202122406440013fb003bc2324252640754000403403bb2728292a3fcb40003f8c036c2b2c2d2e3f983fff3fb6036c2f3031323f983ffb3fb603cc3334
+35363f9d40013faf036c3738393a3fa040013fac03223b063c7840004080400003223d3e3f4040004080400003227b07417c40004080400002ab7e420d0940084080400003797f7e090840004080400002ab47430c80813ff64080400002aa808244458083400840803ffe02de8083450d4240354074400002aa084680887f3f
+f84080400002ee80884643473fca4074400003bc48494a4b3fd14000407703bc4c4d4e4f3f8540004023036c50515253406140023fac036c54555657406240003fae03cc58595a5b40713fff3fc503bc5c5d5e5f40544000406103cc60616263407640004032036c646566673f933ffd3fbd036c68696a6b3f933fff3fbc03cc
+6c6d6e6f3f9940003fb4036c707172733f873ffe3fd7032274757677400040804000032280b13b787940004080400003227a7b7c7d40004080400002aa80b88085427e4008408040000377808780b87e7f40004080400002ab808047808180b93ff64080400002ab80ba808280838084400a4080400002ee8084808342808540
+354074400002ab7f8088808680873ff84080400002de808680884780803fca4074400003cc8089808a808b808c407d40003fe503bb808d808e808f8090406540003fb1036c8091809280938094405c3ffd3fa703cc8095809680978098407040003fc2036c8099809a809b809c406240023fae03bb809d809e809f80a03f9940
+003fb403bc80a180a280a380a4405140004063036c80a880a980aa80ab3f8f40003fc403cc80ac80ad80ae80af3f8c3fff3fca032280b080b17980bb400040804000032280b280b380b480b5400040804000032280b67a7d80b740004080400000

@@ -250,7 +250,6 @@ local sessionid=0
 local k_far,k_near=0,2
 local k_right,k_left=4,8
 local z_near=0.05
-local current_face
 
 -- fonts
 local xlfont={
@@ -1052,12 +1051,12 @@ function collect_model_faces(model,m,parts,out)
 			a=m_x_v(m,a)
 			-- world to cam
 			local ax,ay,az=a[1]+cx,a[2]+cy,a[3]+cz
-			ax,az=cm[1]*ax+cm[5]*ay+cm[9]*az,cm[3]*ax+cm[7]*ay+cm[11]*az
+			ax,ay,az=cm[1]*ax+cm[5]*ay+cm[9]*az,cm[2]*ax+cm[6]*ay+cm[10]*az,cm[3]*ax+cm[7]*ay+cm[11]*az
 			local outcode=az>z_near and k_far or k_near
 			if ax>az then outcode+=k_right
 			elseif -ax>az then outcode+=k_left
 			end	
-			local a={ax,cm[2]*ax+cm[6]*ay+cm[10]*az,az,outcode=outcode}
+			local a={ax,ay,az,outcode=outcode}
 
 			t[k]=a
 			return a
@@ -1243,13 +1242,6 @@ function mpeek()
 	return v
 end
 
--- unpack a list into an argument list
--- trick from: https://gist.github.com/josefnpat/bfe4aaa5bbb44f572cd0
-function munpack(t, from, to)
- local from,to=from or 1,to or #t
- if(from<=to) return t[from], munpack(t, from+1, to)
-end
-
 -- w: number of bytes (1 or 2)
 function unpack_int(w)
   	w=w or 1
@@ -1307,13 +1299,10 @@ function unpack_face()
 	f.ni=band(f.flags,2)>0 and 4 or 3
 	-- vertex indices
 	-- quad?
-	s="["
 	for i=1,f.ni do
 		-- using the face itself saves more than 500KB!
 		f[i]=unpack_variant()
-		s=s..f[i]..","
 	end
-	printh(s.."]")
 	return f
 end
 
@@ -1364,7 +1353,6 @@ function unpack_models()
 	-- for all models
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
-		printh("unpacking: "..name)
 		scale*=0.75
 		unpack_array(function()
 			local d=unpack_double()
@@ -1380,14 +1368,12 @@ function unpack_models()
 			-- unpack vertex groups (as sub model)
 			unpack_array(function()				
 				local name=unpack_string()
-				printh("vg: "..name)
 				local vgroup={offset=unpack_v(scale),f={}}
 				-- faces
 				unpack_array(function()
 					local f=unpack_face()
 					-- normal
 					f.n=unpack_v()
-					printh(f.n[1].."/"..f.n[2].."/"..f.n[3].."."..f[1])
 					-- viz check
 					f.cp=v_dot(f.n,lod.v[f[1]])
 
@@ -1593,16 +1579,6 @@ function print3d(sx,sy,sw,sh,y,angle)
   		w0+=dw
  	end
 	palt()
-end
-
--- rotating print3d (1sec rotation w/ yield)
-function rprint3d_async(sx,sy,sw,sh)
-	local angle=-0.5
-	for k=0,29 do
-		print3d(sx,sy,sw,sh,50,angle)
-		angle+=0.016
-		yield()
-	end
 end
 
 __gfx__
