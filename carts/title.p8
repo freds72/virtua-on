@@ -125,12 +125,40 @@ function m_x_v(m,v)
 	local x,y,z=v[1],v[2],v[3]
 	return {m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]}
 end
+function m_x_m(a,b)
+	local a11,a12,a13,a14=a[1],a[5],a[9],a[13]
+	local a21,a22,a23,a24=a[2],a[6],a[10],a[14]
+	local a31,a32,a33,a34=a[3],a[7],a[11],a[15]
+	local a41,a42,a43,a44=a[4],a[8],a[12],a[16]
+
+	local b11,b12,b13,b14=b[1],b[5],b[9],b[13]
+	local b21,b22,b23,b24=b[2],b[6],b[10],b[14]
+	local b31,b32,b33,b34=b[3],b[7],b[11],b[15]
+	local b41,b42,b43,b44=b[4],b[8],b[12],b[16]
+
+	return {
+			a11*b11+a12*b21+a13*b31+a14*b41,a21*b11+a22*b21+a23*b31+a24*b41,a31*b11+a32*b21+a33*b31+a34*b41,a41*b11+a42*b21+a43*b31+a44*b41,
+			a11*b12+a12*b22+a13*b32+a14*b42,a21*b12+a22*b22+a23*b32+a24*b42,a31*b12+a32*b22+a33*b32+a34*b42,a41*b12+a42*b22+a43*b32+a44*b42,
+			a11*b13+a12*b23+a13*b33+a14*b43,a21*b13+a22*b23+a23*b33+a24*b43,a31*b13+a32*b23+a33*b33+a34*b43,a41*b13+a42*b23+a43*b33+a44*b43,
+			a11*b14+a12*b24+a13*b34+a14*b44,a21*b14+a22*b24+a23*b34+a24*b44,a31*b14+a32*b24+a33*b34+a34*b44,a41*b14+a42*b24+a43*b34+a44*b44
+		}
+end
+   
 function m_clone(m)
 	local c={}
 	for k,v in pairs(m) do
 		c[k]=v
 	end
 	return c
+end
+function print_m(m)
+	for i=0,3 do
+		local s=""
+		for j=0,3 do
+			s=s..m[i*4+j+1].."\t"
+		end
+		printh(s)
+	end
 end
 function make_m_from_euler(x,y,z)
 		local a,b = cos(x),-sin(x)
@@ -177,6 +205,12 @@ function m_inv(m)
 	m[2],m[5]=m[5],m[2]
 	m[3],m[9]=m[9],m[3]
 	m[7],m[10]=m[10],m[7]
+end
+-- inline matrix invert
+-- inc. position
+function m_inv_x_v(m,v)
+	local x,y,z=v[1]-m[13],v[2]-m[14],v[3]-m[15]
+	v[1],v[2],v[3]=m[1]*x+m[2]*y+m[3]*z,m[5]*x+m[6]*y+m[7]*z,m[9]*x+m[10]*y+m[11]*z
 end
 function m_set_pos(m,v)
 	m[13],m[14],m[15]=v[1],v[2],v[3]
@@ -310,8 +344,14 @@ function make_cam()
 			
 			-- inverse view matrix
 			m_inv(m)
-		 	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
-			self.pos,self.m=pos,m
+			self.m=m_x_m(m,{
+				1,0,0,0,
+				0,1,0,0,
+				0,0,1,0,
+				-pos[1],-pos[2],-pos[3],1
+			})
+			
+			self.pos=pos
 		end,
 		project_poly=function(self,p,c)
 			local p0,p1=p[1],p[2]
@@ -376,11 +416,11 @@ function title_state()
 					0,1,0,0,
 					0,0,1,0,
 					0,0,12*0.75*i-0.75*((12*time())%12),1}
-				-- collect_model_faces(all_models["track"],m,nil,out)
+			 		collect_model_faces(all_models["track"],m,nil,out)
 			end
 
 			sort(out)
-			-- draw_faces(out,p)
+			draw_faces(out,p)
 
 			-- car
 			out={}
@@ -426,8 +466,8 @@ function title_state()
 			if t%120==0 then
 				cam_pos={rnd(4)-2,1,rnd(4)-2}
 			end
-			local angle=0.3 --time()/8			
-			cam:track({-sin(angle)/4,0.4,cos(angle)/4},{0,0,0})
+			local angle=time()/8			
+			cam:track({-sin(angle),0.8,cos(angle)},{0,-0.5,0})
 		end
 end
 
@@ -741,12 +781,8 @@ function collect_model_faces(model,m,parts,out)
 	-- vertex group matrix
 	-- using close to avoid repeating the cache function
 	local vgm
-	local cx,cy,cz=cm[13],cm[14],cm[15]
-	local x,y,z=-cx-m[13],-cy-m[14],-cz-m[15]
-	local cam_pos={
-		m[1]*x+m[2]*y+m[3]*z,
-		m[5]*x+m[6]*y+m[7]*z,
-		m[9]*x+m[10]*y+m[11]*z}
+	local cam_pos=make_v({m[13],m[14],m[15]},cam.pos)
+	m_inv_x_v(m,cam_pos)
 	
 	-- select lod
 	local d=v_dot(cam_pos,cam_pos)
@@ -758,24 +794,24 @@ function collect_model_faces(model,m,parts,out)
 	end
 	
 	model=model.lods[min(lodid,#model.lods-1)+1]
-	
+
+	-- object to world
+	-- world to cam
+	m=m_x_m(cam.m,m)
+
 	local v_cache={
 		__index=function(t,k)
 			local a=model.v[k]
-			-- relative to vgroup
-			if vgm then
-				a=m_x_v(vgm,a)
-			end
-			-- relative to world
-			a=m_x_v(m,a)
+			-- relative to vgroup or base matrix			
+			a=m_x_v(vgm and vgm or m,a)
+			
 			-- world to cam
-			local ax,ay,az=a[1]+cx,a[2]+cy,a[3]+cz
-			ax,ay,az=cm[1]*ax+cm[5]*ay+cm[9]*az,cm[2]*ax+cm[6]*ay+cm[10]*az,cm[3]*ax+cm[7]*ay+cm[11]*az
+			local ax,az=a[1],a[3]
 			local outcode=az>z_near and k_far or k_near
 			if ax>az then outcode+=k_right
 			elseif -ax>az then outcode+=k_left
 			end	
-			local a={ax,ay,az,outcode=outcode}
+			local a={ax,a[2],az,outcode=outcode}
 
 			t[k]=a
 			return a
@@ -788,11 +824,10 @@ function collect_model_faces(model,m,parts,out)
 	local m_orig=m_clone(m) 
 	for name,vgroup in pairs(model.vgroups) do
 		-- get world group position
-		local pos=m_x_v(m_orig,vgroup.offset)		
-		m_set_pos(m,pos)
+		m_set_pos(m,m_x_v(m_orig,vgroup.offset))
 		
 		-- lookup vertex group orientation from parts
-		vgm=parts[name]
+		vgm=m_x_m(m,parts[name])
 
 		-- cam to vgroup space
 		local x,y,z=cam_pos[1]-vgroup.offset[1],cam_pos[2]-vgroup.offset[2],cam_pos[3]-vgroup.offset[3]
