@@ -4,7 +4,7 @@ __lua__
 function edge_rasterizer()
 	local ymin,ymax=32000,-32000	
 	local edges={}
-	
+
  return {
 	-- add edge
 	add=function(self,verts,c,z)
@@ -15,13 +15,15 @@ function edge_rasterizer()
 			local v1=verts[i]
 			-- edge building
 			local x0,y0,x1,y1=v0[1],flr(v0[2]),v1[1],flr(v1[2])
+ 		local uu0,uv0,uu1,uv1=v0[3],v0[4],v1[3],v1[4]
  			-- flat edge case?
  			if y0!=y1 then
 			 	-- top/down ordering
- 				if(y0>y1)x0,y0,x1,y1=x1,y1,x0,y0
+ 				if(y0>y1)x0,y0,uu0,uv0,x1,y1,uu1,uv1=x1,y1,uu1,uv1,x0,y0,uu0,uv0
 
 		 		edges[y0]=edges[y0] or {}
- 				add(edges[y0],{ymax=y1,poly=p,x=x0,dx=(x1-x0)/(y1-y0)})
+		 	 local dy=y1-y0
+ 				add(edges[y0],{ymax=y1,poly=p,x=x0,u=uu0,v=uv0,du=(uu1-uu0)/dy,dv=(uv1-uv0)/dy,dx=(x1-x0)/dy})
  	 		ymin,ymax=min(ymin,y0),max(ymax,flr(y1))
 			end
 			v0=v1
@@ -31,7 +33,7 @@ function edge_rasterizer()
  		local aet={}
 		for y=ymin,ymax do
 			-- active polygons on scanline
-			local apl,nearest,xmin={}
+			local apl,nearest,xmin,umin,vmin={}
 			-- get new active edges
 			local el=edges[y]
 			if el then
@@ -49,13 +51,21 @@ function edge_rasterizer()
 					i-=1
 				end
 			end			
-
+			--[[
+			if y%10==0 then
+				for i=1,#aet do
+					local e=aet[i]
+					print(i,e.x,y-2,1)
+				end
+			end
+			]]
 			-- iterate over active edges
-			for e in all(aet) do
-				--local e=aet[i]
+			for i=1,#aet do
+				local e=aet[i]
 				if y>e.ymax then
 					-- end of active edge
-					del(aet,e)					
+					-- del(aet,e)
+					aet[i]=nil
 				else
 					-- 
 					local p=e.poly
@@ -64,31 +74,45 @@ function edge_rasterizer()
 					if p.winding==1 then
 						-- register into apl
 						apl[#apl+1]=p
+						-- pset(e.x,y,11)
 						-- nearest poly?
 						if nearest then							
-							-- leaving nearest poly?
+							-- leaving nearest poly
 							if nearest.z<p.z then		
 								-- draw previous nearest
-								if(e.x>xmin)rectfill(xmin,y,e.x-1,y,nearest.c)
+								local dx=e.x+1-xmin
+								local du,dv=(e.u-umin)/dx,(e.v-vmin)/dx
+								for x=xmin,e.x-1 do
+								 pset(x,y,sget(umin,vmin))
+								 umin+=du
+								 vmin+=dv
+							 end
 								-- record nearest x
 								xmin,nearest=e.x,p
 							end
 						else
-							nearest,xmin=p,e.x
+							nearest,xmin,umin,vmin=p,e.x,e.u,e.v
 						end
 					elseif p.winding==2 then
 						-- only convex polygons
 						-- assert(p.winding==2)
 						-- unregister poly
 						del(apl,p)
+						-- pset(e.x,y,8)
 						p.winding=0
 						-- leaving?
 						if nearest==p then
 							-- pset(e.x,y,7)
 							-- draw nearest
-							if(e.x>xmin)rectfill(xmin,y,e.x-1,y,p.c)
+							local dx=e.x+1-xmin
+							local du,dv=(e.u-umin)/dx,(e.v-vmin)/dx
+							for x=xmin,e.x-1 do
+							 pset(x,y,sget(umin,vmin))
+							 umin+=du
+							 vmin+=dv
+						 end
 							-- record nearest x
-							xmin,nearest=e.x,p
+							xmin,umin,vmin,nearest=e.x,e.u,e.v,p
 							-- search for new nearest
 							local zmax=-32000
 							for _,poly in pairs(apl) do
@@ -100,8 +124,18 @@ function edge_rasterizer()
 					end
 					-- prep for next scanline
 					e.x+=e.dx
+				 e.u+=e.du
+				 e.v+=e.dv	
 				end
-			end			
+			end
+			-- yuck
+			local tmp={}
+			for _,v in pairs(aet) do
+				if(v)add(tmp,v)
+			end
+			aet=tmp
+			--pset(127,y,y)
+			--flip()		
 		end
 		-- reset
 		ymin,ymax=32000,-32000
@@ -117,25 +151,25 @@ local raz
 
 function _init()
  raz=edge_rasterizer()
-	--raz=trifill_rasterizer()
+	-- raz=trifill_rasterizer()
 end
 
 local angle=0
 function _update()
-	--angle+=0.001
+	angle+=0.001
 	local cc,ss=cos(angle),-sin(angle)
 	local function rotate(x,y)
 		x-=64
 		y-=64
 		return 64+x*ss-y*cc,64+x*cc+y*ss
 	end
-	for i=1,8 do
+	for i=1,1 do
 		cc,ss=cos(angle+0.23*i),-sin(angle+0.23*i)
 		local x0,y0=rotate(24,24)
 		local x1,y1=rotate(96,24)
 		local x2,y2=rotate(96,112)
 		local x3,y3=rotate(24,112)
-		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},1+i%13,i)
+		raz:add({{x0,y0,0,0},{x1,y1,15,0},{x2,y2,15,15},{x3,y3,0,15}},1+i%13,i)
  end
  
 end
@@ -269,17 +303,13 @@ function trifill_rasterizer()
   draw=function()
   	sort(polys)
   	for i=1,#polys do
-  		local v=polys[i].v
-  		local v0,v1=v[1],v[2]
-  		for k=3,#v do
-  			local v2=v[k]
-	  		trifill(
- 	 			v0[1],v0[2],
-  	 		v1[1],v1[2],
-						v2[1],v2[2],polys[i].c)
-					v1=v2
-				end
-	 	end
+  		local p=polys[i]
+  		local v=p.v
+  		trifill(
+  			v[1][1],v[1][2],
+   		v[2][1],v[2][2],
+					v[3][1],v[3][2],p.c)
+  	end
   	polys={}
   end
  }
