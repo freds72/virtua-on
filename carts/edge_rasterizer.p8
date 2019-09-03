@@ -138,7 +138,12 @@ end
 
 -->8
 -- main engine
-local raz=edge_rasterizer()
+local raz
+
+function _init()
+ -- =edge_rasterizer()
+ raz=poly_rasterizer()
+end
 
 local angle=0
 function _update()
@@ -149,29 +154,62 @@ function _update()
 		y-=64
 		return 64+x*ss-y*cc,64+x*cc+y*ss
 	end
-	local x0,y0=rotate(24,24)
-	local x1,y1=rotate(96,48)
-	local x2,y2=rotate(48,112)
-	raz:add({{x0,y0},{x1,y1},{x2,y2}},7,1)
-
-	cc,ss=cos(angle+0.5),-sin(angle+0.5)
-	local x0,y0=rotate(24,24)
-	local x1,y1=rotate(96,48)
-	local x2,y2=rotate(48,112)
-	raz:add({{x0,y0},{x1,y1},{x2,y2}},8,0)
-
-
-	cc,ss=cos(angle+0.75),-sin(angle+0.75)
-	local x0,y0=rotate(24,24)
-	local x1,y1=rotate(96,48)
-	local x2,y2=rotate(48,112)
-	raz:add({{x0,y0},{x1,y1},{x2,y2}},9,3)
+	
+	for i=1,8 do
+		cc,ss=cos(angle+0.3*i),-sin(angle+0.3*i)
+		local x0,y0=rotate(24,24)
+		local x1,y1=rotate(96,24)
+		local x2,y2=rotate(96,112)
+		local x3,y3=rotate(24,112)
+		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},i)
+ end
 end
 
 function _draw()
  cls()
  raz:draw()
  print(stat(1),2,112,1)
+end
+
+-->8
+function poly_rasterizer()
+	local ymin,ymax=32000,-32000	
+	local poly={}
+	return {
+	-- add edge
+	add=function(self,verts,c,z)
+		add(poly,{v=verts,c=c})
+	end,
+ draw=function(self)
+  for k=1,#poly do
+   local v=poly[k].v
+   color(poly[k].c)
+ 	 for y=0,127 do
+ 	  local nodes={}
+ 	  local v0=v[#v]
+ 	  local y0=v0[2]
+ 	  for i=1,#v do
+ 	   local v1=v[i]
+ 	   local y1=v1[2]
+ 	   if (y0>y and y1<=y) or (y1>y and y0<=y) then
+ 	    nodes[#nodes+1]=v0[1]+(y-y0)*(v1[1]-v0[1])/(y1-y0)
+ 	   end
+ 	   v0,y0=v1,y1
+ 	  end
+ 	  
+ 	  if #nodes>1 then
+ 	  	rectfill(nodes[1],y,nodes[2],y)
+ 	  end
+				--[[
+ 	  for i=1,#nodes,2 do
+ 	  	rectfill(nodes[i],y,nodes[i+1],y,7)
+ 	  end
+ 	  ]]
+ 	 end
+  end
+  poly={}
+ end
+ }
 end
 
 __gfx__
