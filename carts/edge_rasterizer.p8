@@ -116,13 +116,14 @@ end
 local raz
 
 function _init()
- raz=edge_rasterizer()
-	--raz=trifill_rasterizer()
+ --raz=edge_rasterizer()
+ --raz=poly_rasterizer()
+ raz=trifill_rasterizer()
 end
 
 local angle=0
 function _update()
-	--angle+=0.001
+	angle+=0.001
 	local cc,ss=cos(angle),-sin(angle)
 	local function rotate(x,y)
 		x-=64
@@ -325,6 +326,48 @@ function trifill(x0,y0,x1,y1,x2,y2,col)
   p01_trapeze_w(y1,col,y2,y2,x1,x2)
  end
 end
+
+-->8
+function poly_rasterizer()
+	local ymin,ymax=32000,-32000	
+	local poly={}
+	return {
+	-- add edge
+	add=function(self,verts,c,z)
+		add(poly,{v=verts,c=c})
+	end,
+ draw=function(self)
+  for k=1,#poly do
+   local v=poly[k].v
+   color(poly[k].c)
+ 	 for y=0,127 do
+ 	  local nodes={}
+ 	  local v0=v[#v]
+ 	  local y0=v0[2]
+ 	  for i=1,#v do
+ 	   local v1=v[i]
+ 	   local y1=v1[2]
+ 	   if (y0>y and y1<=y) or (y1>y and y0<=y) then
+ 	    nodes[#nodes+1]=v0[1]+(y-y0)*(v1[1]-v0[1])/(y1-y0)
+ 	   end
+ 	   v0,y0=v1,y1
+ 	  end
+ 	  
+ 	  if #nodes>1 then
+ 	  	rectfill(nodes[1],y,nodes[2],y)
+ 	  end
+				--[[
+ 	  for i=1,#nodes,2 do
+ 	  	rectfill(nodes[i],y,nodes[i+1],y,7)
+ 	  end
+ 	  ]]
+ 	 end
+  end
+  poly={}
+ end
+ }
+end
+
 __gfx__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
