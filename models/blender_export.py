@@ -170,14 +170,15 @@ def export_layer(scale,l):
         # group index -> cg
         vgroup_cgs_by_name = {}
         for k,v in vgroups.items():
-            # group position
-            cg = Vector((0,0,0))
-            for p in [obdata.vertices[vi] for vi in v]:
-                cg += p.co
-            cg /= len(v)
-            for vi in v:
-                vgroup_cgs[vi] = cg
-            vgroup_cgs_by_name[vgroup_names[k]] = cg
+            if vgroup_names[k]!='DETAIL_FACE':
+                # group position
+                cg = Vector((0,0,0))
+                for p in [obdata.vertices[vi] for vi in v]:
+                    cg += p.co
+                cg /= len(v)
+                for vi in v:
+                    vgroup_cgs[vi] = cg
+                vgroup_cgs_by_name[vgroup_names[k]] = cg
         
         # vertex index -> group 
         vgroups = { v.index: vgroup_names[v.groups[0].group] for v in obdata.vertices if len(v.groups)>0 }
