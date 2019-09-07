@@ -983,14 +983,11 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
 			local z,y,outcode,verts,is_clipped=0,0,0xffff,{},0
-			-- debug
-			local center={0,0,0}
 			-- project vertices
 			for ki=1,face.ni do
 				local a=v_cache[face[ki]]
 				y+=a[2]
 				z+=a[3]
-				v_add(center,a)
 				outcode=band(outcode,a.outcode)
 				-- behind near plane?
 				is_clipped+=band(a.outcode,2)
@@ -1001,8 +998,6 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 	   			-- average before changing verts
 				y/=#verts
 				z/=#verts
-				-- debug
-				v_scale(center,1/#verts)
 
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
