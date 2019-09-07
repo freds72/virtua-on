@@ -121,6 +121,22 @@ function m_x_v(m,v)
 	local x,y,z=v[1],v[2],v[3]
 	return {m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]}
 end
+function m_x_m(a,b)
+	local a11,a12,a13,a14=a[1],a[5],a[9],a[13]
+	local a21,a22,a23,a24=a[2],a[6],a[10],a[14]
+	local a31,a32,a33,a34=a[3],a[7],a[11],a[15]
+
+	local b11,b12,b13,b14=b[1],b[5],b[9],b[13]
+	local b21,b22,b23,b24=b[2],b[6],b[10],b[14]
+	local b31,b32,b33,b34=b[3],b[7],b[11],b[15]
+
+	return {
+			a11*b11+a12*b21+a13*b31,a21*b11+a22*b21+a23*b31,a31*b11+a32*b21+a33*b31,0,
+			a11*b12+a12*b22+a13*b32,a21*b12+a22*b22+a23*b32,a31*b12+a32*b22+a33*b32,0,
+			a11*b13+a12*b23+a13*b33,a21*b13+a22*b23+a23*b33,a31*b13+a32*b23+a33*b33,0,
+			a11*b14+a12*b24+a13*b34+a14,a21*b14+a22*b24+a23*b34+a24,a31*b14+a32*b24+a33*b34+a34,1
+		}
+end
 function m_clone(m)
 	local c={}
 	for k,v in pairs(m) do
@@ -159,6 +175,13 @@ function m_inv(m)
 	m[3],m[9]=m[9],m[3]
 	m[7],m[10]=m[10],m[7]
 end
+-- inline matrix vector multiply invert
+-- inc. position
+function m_inv_x_v(m,v)
+	local x,y,z=v[1]-m[13],v[2]-m[14],v[3]-m[15]
+	return {m[1]*x+m[2]*y+m[3]*z,m[5]*x+m[6]*y+m[7]*z,m[9]*x+m[10]*y+m[11]*z}
+end
+
 function m_set_pos(m,v)
 	m[13],m[14],m[15]=v[1],v[2],v[3]
 end
@@ -284,7 +307,7 @@ function make_cam()
 	local view_pov={
 		{-2.2,1.5,0.2},
 		{-0.7,0.3,0.1},
-		{-0.01,0.11,1}
+		{-0.01,0.11,0.6}
 	}
 	local current_pov=v_clone(view_pov[view_mode+1])
 
@@ -331,8 +354,14 @@ function make_cam()
 			
 			-- inverse view matrix
 			m_inv(m)
-		 	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
-			self.pos,self.m=pos,m
+			self.m=m_x_m(m,{
+				1,0,0,0,
+				0,1,0,0,
+				0,0,1,0,
+				-pos[1],-pos[2],-pos[3],1
+			})
+			
+			self.pos=pos
 		end,
 		project_poly=function(self,p,c)
 			local p0,p1=p[1],p[2]
@@ -491,10 +520,10 @@ function make_car(model,p,angle)
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
 		get_pos=function(self)
-	 		return self.pos,angle,make_m_from_v_angle(oldf and oldf.n or v_up,angle)
+	 		return self.pos,angle
 		end,
 		get_orient=function()
-			return m_from_q(make_q(oldf and oldf.n or v_up,angle))
+			return make_m_from_v_angle(oldf and oldf.n or v_up,angle)
 		end,
 		get_up=function()
 			return oldf and oldf.n or v_up
@@ -616,8 +645,8 @@ function make_plyr(p,angle)
 	body.model=all_models["car"]
 	body.control=function(self)	
 		local da=0
-		if(btn(0)) da=-1
-		if(btn(1)) da=1
+		if(btn(0)) da=1
+		if(btn(1)) da=-1
 
 		-- accelerate
 		if btn(2) then
@@ -976,6 +1005,23 @@ function _update()
 	skidmarks:update()
 end
 
+local v_cache_cls={
+	__index=function(t,k)
+		-- relative to vgroup or base matrix			
+		local a=m_x_v(t.m,t.v[k])
+		
+		-- world to cam
+		local ax,az=a[1],a[3]
+		local outcode=az>z_near and k_far or k_near
+		if ax>az then outcode+=k_right
+		elseif -ax>az then outcode+=k_left
+		end	
+		a={ax,a[2],az,outcode=outcode}
+
+		t[k]=a
+		return a
+	end
+}
 
 function collect_faces(faces,cam_pos,v_cache,out,dist)
 	local n=#out+1
@@ -1015,14 +1061,9 @@ end
 function collect_model_faces(model,m,parts,out)
 	-- all models reuses the same faces!!
 	sessionid+=1
+	
 	-- cam pos in object space
-	local p,cm={},cam.m
-	-- vertex group matrix
-	-- using close to avoid repeating the cache function
-	local vgm
-	local cx,cy,cz=cm[13],cm[14],cm[15]
-	local x,y,z=-cx-m[13],-cy-m[14],-cz-m[15]
-	local cam_pos={m[1]*x+m[2]*y+m[3]*z,m[5]*x+m[6]*y+m[7]*z,m[9]*x+m[10]*y+m[11]*z}
+	local cam_pos=m_inv_x_v(m,cam.pos)
 	
 	-- select lod
 	local d=v_dot(cam_pos,cam_pos)
@@ -1034,47 +1075,35 @@ function collect_model_faces(model,m,parts,out)
 	end
 	
 	model=model.lods[min(lodid,#model.lods-1)+1]
-	
-	local v_cache={
-		__index=function(t,k)
-			local a=model.v[k]
-			-- relative to vgroup
-			if vgm then
-				a=m_x_v(vgm,a)
-			end
-			-- relative to world
-			a=m_x_v(m,a)
-			-- world to cam
-			local ax,ay,az=a[1]+cx,a[2]+cy,a[3]+cz
-			ax,ay,az=cm[1]*ax+cm[5]*ay+cm[9]*az,cm[2]*ax+cm[6]*ay+cm[10]*az,cm[3]*ax+cm[7]*ay+cm[11]*az
-			local outcode=az>z_near and k_far or k_near
-			if ax>az then outcode+=k_right
-			elseif -ax>az then outcode+=k_left
-			end	
-			local a={ax,ay,az,outcode=outcode}
 
-			t[k]=a
-			return a
-		end
-	}
-	setmetatable(p,v_cache)
+	-- object to world
+	-- world to cam
+	m=m_x_m(cam.m,m)
+
+	-- vertex cache (and model context)
+	local p={m=m,v=model.v}
+	
+	setmetatable(p,v_cache_cls)
+
 	-- main model
 	collect_faces(model.f,cam_pos,p,out)
-	-- sub models	
-	local m_orig=m_clone(m) 
+	-- sub models
+	local m_orig,m_base=m_clone(m),m_clone(m) 
+	
 	for name,vgroup in pairs(model.vgroups) do
-		-- get world group position
-		local pos=m_x_v(m_orig,vgroup.offset)		
-		m_set_pos(m,pos)
 		
 		-- lookup vertex group orientation from parts
-		vgm=parts[name]
+		local vgm=parts[name]
 
 		-- cam to vgroup space
-		local x,y,z=cam_pos[1]-vgroup.offset[1],cam_pos[2]-vgroup.offset[2],cam_pos[3]-vgroup.offset[3]
-		local vg_cam_pos={vgm[1]*x+vgm[2]*y+vgm[3]*z,vgm[5]*x+vgm[6]*y+vgm[7]*z,vgm[9]*x+vgm[10]*y+vgm[11]*z}
+		-- note: cam_pos is already in object space
+		local vg_cam_pos=m_inv_x_v(vgm,make_v(vgroup.offset,cam_pos))
 
-		collect_faces(vgroup.f,vg_cam_pos,p,out)
+		-- full vertex group vertex to cam transformation
+		m_set_pos(m_base,m_x_v(m_orig,vgroup.offset))
+		p.m=m_x_m(m_base,vgm)
+
+	 	collect_faces(vgroup.f,vg_cam_pos,p,out)
 	end
 end
 
@@ -1103,15 +1132,13 @@ function draw_faces(faces,v_cache)
 			end
 			-- face skidmarks
 			if d.f.skidmarks then
-				local p,m={},cam.m
-				local cx,cy,cz=m[13],m[14],m[15]			
+				local m=v_cache.m
 				for _,skids in pairs(d.f.skidmarks) do
 					local verts,outcode,is_clipped={},0xffff,0
 					for i=1,4 do
 						-- world to cam
-						local v=skids[i]
-						local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
-						local ax,az=m[1]*x+m[5]*y+m[9]*z,m[3]*x+m[7]*y+m[11]*z
+						local a=m_x_v(m,skids[i])
+						local ax,az=a[1],a[3]
 						local aout=az>z_near and k_far or k_near
 						if ax>az then aout+=k_right
 						elseif -ax>az then aout+=k_left
@@ -1119,7 +1146,7 @@ function draw_faces(faces,v_cache)
 						-- behind near plane?
 						is_clipped+=band(aout,2)
 						outcode=band(outcode,aout)
-						verts[i]={ax,m[2]*x+m[6]*y+m[10]*z,az}
+						verts[i]={ax,a[2],az}
 					end
 					if outcode==0 then
 						-- mix of near+far vertices?
@@ -1129,16 +1156,6 @@ function draw_faces(faces,v_cache)
 				end
 			end
 		end
-		-- debug
-		--[[
-		if d.center then
-			local x0,y0=63.5+flr(shl(d.center[1]/d.center[3],6)),63.5-flr(shl(d.center[2]/d.center[3],6))
-			local n=v_clone(d.f.n)
-			v_add(n,d.center,2)
-			local x1,y1=63.5+flr(shl(n[1]/n[3],6)),63.5-flr(shl(n[2]/n[3],6))
-			line(x0,y0,x1,y1,8)
-		end
-		]]
 	end
 end
 
@@ -1152,26 +1169,9 @@ function _draw()
 	 	map(0,0,x0-128,0)
  	end
 
-	local p,m={},cam.m
-	local cx,cy,cz=m[13],m[14],m[15]
-	local v_cache={
-		__index=function(t,k)
-			-- world to cam
-			local v=track.v[k]
-			local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
-			local ax,az=m[1]*x+m[5]*y+m[9]*z,m[3]*x+m[7]*y+m[11]*z
-			local outcode=az>z_near and k_far or k_near
-			if ax>az then outcode+=k_right
-			elseif -ax>az then outcode+=k_left
-			end	
-			local a={ax,m[2]*x+m[6]*y+m[10]*z,az,outcode=outcode}
-			-- store the value
-			t[k]=a
-			-- return value for current call
-			return a
-		end
-	}
-	setmetatable(p,v_cache)
+	-- track
+	local v_cache={m=cam.m,v=track.v}
+	setmetatable(v_cache,v_cache_cls)
 
 	local tiles=cam:visible_tiles()
 
@@ -1181,12 +1181,12 @@ function _draw()
 	--for k,_ in pairs(track.voxels) do
 		local faces=track.voxels[k]
 		if faces then
-			collect_faces(faces,cam.pos,p,out,dist)
+			collect_faces(faces,cam.pos,v_cache,out,dist)
 		end 
 	end
 
 	sort(out)
-	draw_faces(out,p)
+	draw_faces(out,v_cache)
  
 	-- clear vertex cache
 	out={}
