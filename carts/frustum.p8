@@ -121,6 +121,22 @@ function m_x_v(m,v)
 	local x,y,z=v[1],v[2],v[3]
 	return {m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]}
 end
+function m_x_m(a,b)
+	local a11,a12,a13,a14=a[1],a[5],a[9],a[13]
+	local a21,a22,a23,a24=a[2],a[6],a[10],a[14]
+	local a31,a32,a33,a34=a[3],a[7],a[11],a[15]
+
+	local b11,b12,b13,b14=b[1],b[5],b[9],b[13]
+	local b21,b22,b23,b24=b[2],b[6],b[10],b[14]
+	local b31,b32,b33,b34=b[3],b[7],b[11],b[15]
+
+	return {
+			a11*b11+a12*b21+a13*b31,a21*b11+a22*b21+a23*b31,a31*b11+a32*b21+a33*b31,0,
+			a11*b12+a12*b22+a13*b32,a21*b12+a22*b22+a23*b32,a31*b12+a32*b22+a33*b32,0,
+			a11*b13+a12*b23+a13*b33,a21*b13+a22*b23+a23*b33,a31*b13+a32*b23+a33*b33,0,
+			a11*b14+a12*b24+a13*b34+a14,a21*b14+a22*b24+a23*b34+a24,a31*b14+a32*b24+a33*b34+a34,1
+		}
+end
 function m_clone(m)
 	local c={}
 	for k,v in pairs(m) do
@@ -159,6 +175,13 @@ function m_inv(m)
 	m[3],m[9]=m[9],m[3]
 	m[7],m[10]=m[10],m[7]
 end
+-- inline matrix vector multiply invert
+-- inc. position
+function m_inv_x_v(m,v)
+	local x,y,z=v[1]-m[13],v[2]-m[14],v[3]-m[15]
+	return {m[1]*x+m[2]*y+m[3]*z,m[5]*x+m[6]*y+m[7]*z,m[9]*x+m[10]*y+m[11]*z}
+end
+
 function m_set_pos(m,v)
 	m[13],m[14],m[15]=v[1],v[2],v[3]
 end
@@ -284,7 +307,7 @@ function make_cam()
 	local view_pov={
 		{-2.2,1.5,0.2},
 		{-0.7,0.3,0.1},
-		{-0.01,0.11,1}
+		{-0.01,0.11,0.6}
 	}
 	local current_pov=v_clone(view_pov[view_mode+1])
 
@@ -296,9 +319,18 @@ function make_cam()
 	for i=0,15 do
 		add(angles,atan2(7.5,i-7.5))
 	end
+
+	-- screen shake
+	local shkx,shky=0,0
+	camera()
+	
 	return {
 		pos={0,0,0},
 		angle=0,
+		shake=function(self,u,v,pow)
+			shkx=min(4,shkx+pow*u)
+			shky=min(4,shky+pow*v)
+		end,
 		update=function(self)
 			if switching_async then
 				switching_async=corun(switching_async)
@@ -315,6 +347,13 @@ function make_cam()
 					current_pov,view_mode=next_pov,next_mode
 				end)
 			end
+
+			shkx*=-0.7-rnd(0.2)
+			shky*=-0.7-rnd(0.2)
+			if abs(shkx)<0.5 and abs(shky)<0.5 then
+				shkx,shky=0,0
+			end
+			camera(shkx,shky)
 		end,
 		track=function(self,pos,a,u)
    			pos=v_clone(pos)
@@ -331,8 +370,14 @@ function make_cam()
 			
 			-- inverse view matrix
 			m_inv(m)
-		 	m_set_pos(m,{-pos[1],-pos[2],-pos[3]})
-			self.pos,self.m=pos,m
+			self.m=m_x_m(m,{
+				1,0,0,0,
+				0,1,0,0,
+				0,0,1,0,
+				-pos[1],-pos[2],-pos[3],1
+			})
+			
+			self.pos=pos
 		end,
 		project_poly=function(self,p,c)
 			local p0,p1=p[1],p[2]
@@ -490,11 +535,14 @@ function make_car(model,p,angle)
 	return {
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
+		get_sliding_t=function(self)
+			return sliding_t
+		end,
 		get_pos=function(self)
-	 		return self.pos,angle,make_m_from_v_angle(oldf and oldf.n or v_up,angle)
+	 		return self.pos,angle
 		end,
 		get_orient=function()
-			return m_from_q(make_q(oldf and oldf.n or v_up,angle))
+			return make_m_from_v_angle(oldf and oldf.n or v_up,angle)
 		end,
 		get_up=function()
 			return oldf and oldf.n or v_up
@@ -538,7 +586,6 @@ function make_car(model,p,angle)
 			-- longitudinal slip ratio
 			local right=m_right(self.m)
 			local sr=v_dot(right,velocity)
-			local last_sliding_t=sliding_t
 			local full_slide
 			if abs(sr)>0.12 then
 				sliding_t+=1
@@ -616,8 +663,8 @@ function make_plyr(p,angle)
 	body.model=all_models["car"]
 	body.control=function(self)	
 		local da=0
-		if(btn(0)) da=-1
-		if(btn(1)) da=1
+		if(btn(0)) da=1
+		if(btn(1)) da=-1
 
 		-- accelerate
 		if btn(2) then
@@ -629,7 +676,11 @@ function make_plyr(p,angle)
 	
 	body.update=function(self)
 		body_update(self)
-		rpm*=0.97		
+		rpm*=0.97
+
+		-- sliding?
+		local shake=min(self:get_sliding_t()/16,1)
+		cam:shake(rnd(shake),rnd(shake),1)
 	end
 	-- wrapper
 	return body
@@ -677,7 +728,7 @@ function make_npc(p,angle,track)
 		-- force application point
 		local p=v_clone(self.pos)
 		v_add(p,fwd,3)
-
+		
 		local rpm=0.6
 		-- default: steer to track
 		local target=inv_apply(self,track:update(p,24))
@@ -832,7 +883,7 @@ function play_state()
 	local laps={}
 
 	-- remaining time before game over (+ some buffer time)
-	local lap_t,remaining_t,best_t,best_i=0,30*30,32000,1
+	local lap_t,remaining_t,best_t,best_i=0,30*65,32000,1
 	
 	-- go display
 	local go_ttl=30
@@ -849,6 +900,13 @@ function play_state()
 			printb("time",56,2,7,0)
 			printf(tostr(ceil(remaining_t/30)),64,9,xlfont)
 			
+			-- speed
+			local x=printf(tostr(flr(plyr:get_speed())),22,110,xlfont)
+			palt(14,true)
+			palt(0,false)
+   spr(41,x,110,4,2)
+   palt()
+   
 			-- blink go!
 			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,50)
 
@@ -877,7 +935,9 @@ function play_state()
 				circfill(x0,y0,1.5,0x4)
 			end
 			circfill(96,64,1,0x8)			
- 		end,
+
+			
+		end,
 		-- update
 		function()
 			remaining_t-=1
@@ -888,9 +948,9 @@ function play_state()
 			end
 			lap_t+=1
 			local p,r=to_v(checkpoint)
-			if v_len(make_v(plyr.pos,p))<r then
+			if v_len(make_v({plyr.pos[1],0,plyr.pos[3]},p))<r then
 				checkpoint+=1
-				remaining_t+=30*30
+				remaining_t+=30*10
 				-- closed lap?
 				if checkpoint%n==0 then
 					checkpoint=0
@@ -899,6 +959,10 @@ function play_state()
 					if(lap_t<best_t) then
 						best_t=lap_t
 						best_i=#laps						
+					end
+					-- done?
+					if #laps==3 then
+						next_state(goal_state)
 					end
 					-- next lap
 					lap_t=0
@@ -930,6 +994,26 @@ function gameover_state()
 		end
 end
 
+function goal_state()
+	local ttl=900
+	local angle=-0.5
+	return 
+		-- draw
+		function()
+			-- rotating game over
+			print3d(0,64,51,12,50,angle)
+			if(ttl%4<2) printb("press ❎/🅾️ to continue",24,110,7,0)
+		end,
+		-- update
+		function()
+			ttl-=1
+			angle+=0.01
+			if btnp(4) or btnp(5) or ttl<0 then
+				next_state(start_state)
+			end
+		end
+end
+
 function _init()
 	-- integrated fillp/color
 	poke(0x5f34,1)
@@ -937,8 +1021,7 @@ function _init()
 	-- clear screen
 	cls()
 	-- first track data cart
-	reload(0,0,0x4300,"track_0.p8")
-	track=unpack_track()
+	track=unpack_track("acropolis")
 	-- 3d models cart
 	reload(0,0,0x4300,"track_models.p8")
 	-- load regular 3d models
@@ -976,6 +1059,25 @@ function _update()
 	skidmarks:update()
 end
 
+-- vertex cache class
+-- uses m (matrix) and v (vertices) from self
+-- saves the 'if not ...' in inner loop
+local v_cache_cls={
+	__index=function(t,k)
+		-- inline: local a=m_x_v(t.m,t.v[k]) 
+		local v,m=t.v[k],t.m
+		local x,y,z=v[1],v[2],v[3]
+		local ax,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[3]*x+m[7]*y+m[11]*z+m[15]
+	
+		local outcode=az>z_near and k_far or k_near
+		if ax>az then outcode+=k_right
+		elseif -ax>az then outcode+=k_left
+		end	
+
+		t[k]={ax,m[2]*x+m[6]*y+m[10]*z+m[14],az,outcode=outcode}
+		return t[k]
+	end
+}
 
 function collect_faces(faces,cam_pos,v_cache,out,dist)
 	local n=#out+1
@@ -1015,14 +1117,9 @@ end
 function collect_model_faces(model,m,parts,out)
 	-- all models reuses the same faces!!
 	sessionid+=1
+	
 	-- cam pos in object space
-	local p,cm={},cam.m
-	-- vertex group matrix
-	-- using close to avoid repeating the cache function
-	local vgm
-	local cx,cy,cz=cm[13],cm[14],cm[15]
-	local x,y,z=-cx-m[13],-cy-m[14],-cz-m[15]
-	local cam_pos={m[1]*x+m[2]*y+m[3]*z,m[5]*x+m[6]*y+m[7]*z,m[9]*x+m[10]*y+m[11]*z}
+	local cam_pos=m_inv_x_v(m,cam.pos)
 	
 	-- select lod
 	local d=v_dot(cam_pos,cam_pos)
@@ -1034,47 +1131,35 @@ function collect_model_faces(model,m,parts,out)
 	end
 	
 	model=model.lods[min(lodid,#model.lods-1)+1]
-	
-	local v_cache={
-		__index=function(t,k)
-			local a=model.v[k]
-			-- relative to vgroup
-			if vgm then
-				a=m_x_v(vgm,a)
-			end
-			-- relative to world
-			a=m_x_v(m,a)
-			-- world to cam
-			local ax,ay,az=a[1]+cx,a[2]+cy,a[3]+cz
-			ax,ay,az=cm[1]*ax+cm[5]*ay+cm[9]*az,cm[2]*ax+cm[6]*ay+cm[10]*az,cm[3]*ax+cm[7]*ay+cm[11]*az
-			local outcode=az>z_near and k_far or k_near
-			if ax>az then outcode+=k_right
-			elseif -ax>az then outcode+=k_left
-			end	
-			local a={ax,ay,az,outcode=outcode}
 
-			t[k]=a
-			return a
-		end
-	}
-	setmetatable(p,v_cache)
+	-- object to world
+	-- world to cam
+	m=m_x_m(cam.m,m)
+
+	-- vertex cache (and model context)
+	local p={m=m,v=model.v}
+	
+	setmetatable(p,v_cache_cls)
+
 	-- main model
 	collect_faces(model.f,cam_pos,p,out)
-	-- sub models	
-	local m_orig=m_clone(m) 
+	-- sub models
+	local m_orig,m_base=m_clone(m),m_clone(m) 
+	
 	for name,vgroup in pairs(model.vgroups) do
-		-- get world group position
-		local pos=m_x_v(m_orig,vgroup.offset)		
-		m_set_pos(m,pos)
 		
 		-- lookup vertex group orientation from parts
-		vgm=parts[name]
+		local vgm=parts[name]
 
 		-- cam to vgroup space
-		local x,y,z=cam_pos[1]-vgroup.offset[1],cam_pos[2]-vgroup.offset[2],cam_pos[3]-vgroup.offset[3]
-		local vg_cam_pos={vgm[1]*x+vgm[2]*y+vgm[3]*z,vgm[5]*x+vgm[6]*y+vgm[7]*z,vgm[9]*x+vgm[10]*y+vgm[11]*z}
+		-- note: cam_pos is already in object space
+		local vg_cam_pos=m_inv_x_v(vgm,make_v(vgroup.offset,cam_pos))
 
-		collect_faces(vgroup.f,vg_cam_pos,p,out)
+		-- full vertex group vertex to cam transformation
+		m_set_pos(m_base,m_x_v(m_orig,vgroup.offset))
+		p.m=m_x_m(m_base,vgm)
+
+	 	collect_faces(vgroup.f,vg_cam_pos,p,out)
 	end
 end
 
@@ -1103,15 +1188,13 @@ function draw_faces(faces,v_cache)
 			end
 			-- face skidmarks
 			if d.f.skidmarks then
-				local p,m={},cam.m
-				local cx,cy,cz=m[13],m[14],m[15]			
+				local m=v_cache.m
 				for _,skids in pairs(d.f.skidmarks) do
 					local verts,outcode,is_clipped={},0xffff,0
 					for i=1,4 do
 						-- world to cam
-						local v=skids[i]
-						local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
-						local ax,az=m[1]*x+m[5]*y+m[9]*z,m[3]*x+m[7]*y+m[11]*z
+						local a=m_x_v(m,skids[i])
+						local ax,az=a[1],a[3]
 						local aout=az>z_near and k_far or k_near
 						if ax>az then aout+=k_right
 						elseif -ax>az then aout+=k_left
@@ -1119,7 +1202,7 @@ function draw_faces(faces,v_cache)
 						-- behind near plane?
 						is_clipped+=band(aout,2)
 						outcode=band(outcode,aout)
-						verts[i]={ax,m[2]*x+m[6]*y+m[10]*z,az}
+						verts[i]={ax,a[2],az}
 					end
 					if outcode==0 then
 						-- mix of near+far vertices?
@@ -1129,16 +1212,6 @@ function draw_faces(faces,v_cache)
 				end
 			end
 		end
-		-- debug
-		--[[
-		if d.center then
-			local x0,y0=63.5+flr(shl(d.center[1]/d.center[3],6)),63.5-flr(shl(d.center[2]/d.center[3],6))
-			local n=v_clone(d.f.n)
-			v_add(n,d.center,2)
-			local x1,y1=63.5+flr(shl(n[1]/n[3],6)),63.5-flr(shl(n[2]/n[3],6))
-			line(x0,y0,x1,y1,8)
-		end
-		]]
 	end
 end
 
@@ -1152,26 +1225,9 @@ function _draw()
 	 	map(0,0,x0-128,0)
  	end
 
-	local p,m={},cam.m
-	local cx,cy,cz=m[13],m[14],m[15]
-	local v_cache={
-		__index=function(t,k)
-			-- world to cam
-			local v=track.v[k]
-			local x,y,z=v[1]+cx,v[2]+cy,v[3]+cz
-			local ax,az=m[1]*x+m[5]*y+m[9]*z,m[3]*x+m[7]*y+m[11]*z
-			local outcode=az>z_near and k_far or k_near
-			if ax>az then outcode+=k_right
-			elseif -ax>az then outcode+=k_left
-			end	
-			local a={ax,m[2]*x+m[6]*y+m[10]*z,az,outcode=outcode}
-			-- store the value
-			t[k]=a
-			-- return value for current call
-			return a
-		end
-	}
-	setmetatable(p,v_cache)
+	-- track
+	local v_cache={m=cam.m,v=track.v}
+	setmetatable(v_cache,v_cache_cls)
 
 	local tiles=cam:visible_tiles()
 
@@ -1181,12 +1237,12 @@ function _draw()
 	--for k,_ in pairs(track.voxels) do
 		local faces=track.voxels[k]
 		if faces then
-			collect_faces(faces,cam.pos,p,out,dist)
+			collect_faces(faces,cam.pos,v_cache,out,dist)
 		end 
 	end
 
 	sort(out)
-	draw_faces(out,p)
+	draw_faces(out,v_cache)
  
 	-- clear vertex cache
 	out={}
@@ -1217,12 +1273,12 @@ end
 
 -->8
 -- unpack data & models
-local cart_id,mem=1
+local cart_id,cart_name,mem=1,"track"
 local cart_msg="    virtua racing - boot\n"
 function mpeek()
 	if mem==0x4300 then
 		cart_msg=cart_msg.."\n"
-		reload(0,0,0x4300,"track_"..cart_id..".p8")
+		reload(0,0,0x4300,cart_name.."_"..cart_id..".p8")
 		cart_id += 1
 		mem=0
 	end
@@ -1385,8 +1441,9 @@ function unpack_models()
 end
 
 -- unpack multi-cart track
-function unpack_track()
-	mem=0
+function unpack_track(name)
+	cart_name,mem=name,0
+	reload(0,0,0x4300,cart_name.."_0.p8")
 	local model={
 		v={},
 		f={},
@@ -1541,6 +1598,7 @@ function printf(s,x,y,font)
 	end
 	
 	palt()
+	return x
 end
 
 -- big font
@@ -1591,22 +1649,22 @@ __gfx__
 0000000077777777777777777777770009aaaaaaaa990ee0aaaaaa90ee0aaaaaaaaaa9009aaaaaaaa990000000000aa9009aaaaaaaa99009aaaaaaaa99000000
 00000000777777777777777777777770e09999999990eee099999990ee0999999999990e09999999990eeeeeeeee09990e09999999990ee09999999990e00000
 00000000777777777777777777777777ee000000000eeee000000000ee0000000000000ee000000000eeeeeeeeee00000ee000000000eeee000000000ee00000
-000000006666666633333333000000000000000000000ee000000000eeee000000000ee000000000000000000000000000000000000000000000000000000000
-000000006d6d6d6d33333333000000000aaaaaaaaaa90e0aaaaaaaaa0ee0aaaaaaaaa0e000000000000000000000000000000000000000000000000000000000
-000000003636363633333333000000000aaaaaaaaaa900aaaaaaaaaa900aaaaaaaaaa90000000000000000000000000000000000000000000000000000000000
-000000003333333333333333000000000aa999999aa900aa999999aa900aa999999aa90000000000000000000000000000000000000000000000000000000000
-000000003333333333333333000000000aa900000aa900aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
-0000000033333333333333330000000009990eee0aa900aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
-0000000033333333333333330000000000000ee0aaa900aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
-00000000333333333333333300000000eeeeee0aaa90ee0aaaaaaaa90e09aaaaaaaaa90000000000000000000000000000000000000000000000000000000000
-00000000e0eeee0e0000000000000000eeeee0aaa90eee0a999999a90ee09999999aa90000000000000000000000000000000000000000000000000000000000
-00000000070ee0700000000000000000eeee0aaa90eee0aa900000aa90000000000aa90000000000000000000000000000000000000000000000000000000000
-00000000e07ee70e0000000000000000eeee0aa90eeee0aa90eee0aa900aa90eee0aa90000000000000000000000000000000000000000000000000000000000
-00000000eeeeeeee0000000000000000eeee0aa90eeee0aa900000aa900aa900000aa90000000000000000000000000000000000000000000000000000000000
-00000000eeeeeeee0000000000000000eeee0aa90eeee0aaaaaaaaaa900aaaaaaaaaa90000000000000000000000000000000000000000000000000000000000
-00000000e07ee70e0000000000000000eeee0aa90eeee0aaaaaaaaa99009aaaaaaaa990000000000000000000000000000000000000000000000000000000000
-00000000070ee0700000000000000000eeee09990eeeee09999999990ee09999999990e000000000000000000000000000000000000000000000000000000000
-0000000070eeee0e0000000000000000eeee00000eeeeee000000000eeee000000000ee000000000000000000000000000000000000000000000000000000000
+000000006666666633333333000000000000000000000ee000000000eeee000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee000000000000000000000000
+000000006d6d6d6d33333333000000000aaaaaaaaaa90e0aaaaaaaaa0ee0aaaaaaaaa0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee000000000000000000000000
+000000003636363633333333000000000aaaaaaaaaa900aaaaaaaaaa900aaaaaaaaaa9000000000eeeeeeeeeeeee00000000eeee000000000000000000000000
+000000003333333333333333000000000aa999999aa900aa999999aa900aa999999aa900aa00aa0eeeeeeeeeeeee0aa00aa0eeee000000000000000000000000
+000000003333333333333333000000000aa900000aa900aa900000aa900aa900000aa900aa00aa0eeeeeeeeeeeee0aa00aa0eeee000000000000000000000000
+0000000033333333333333330000000009990eee0aa900aa90eee0aa900aa90eee0aa900aa00aa0eeeeeeeeeeeee0a900aa0eeee000000000000000000000000
+0000000033333333333333330000000000000ee0aaa900aa900000aa900aa900000aa900aa0aaa0eeeeeeeeeeee0aa0e0aa0eeee000000000000000000000000
+00000000333333333333333300000000eeeeee0aaa90ee0aaaaaaaa90e09aaaaaaaaa900aaaaa90ee000e000eee0aa0e0aa000ee000000000000000000000000
+00000000e0eeee0e0000000000000000eeeee0aaa90eee0a999999a90ee09999999aa900aaaa900e0aaa0aaa0ee0a90e0aaaaa0e000000000000000000000000
+00000000070ee0700000000000000000eeee0aaa90eee0aa900000aa90000000000aa900aaaaa000aaaaaaaa0e0aa0ee0aaaaaa0000000000000000000000000
+00000000e07ee70e0000000000000000eeee0aa90eeee0aa90eee0aa900aa90eee0aa900aa9aaa00aa9aa9aa0e0aa0ee0aa99aa0000000000000000000000000
+00000000eeeeeeee0000000000000000eeee0aa90eeee0aa900000aa900aa900000aa900aa09aa00aa0aa0aa0e0a90ee0aa00aa0000000000000000000000000
+00000000eeeeeeee0000000000000000eeee0aa90eeee0aaaaaaaaaa900aaaaaaaaaa900aa00aa00aa0aa0aa00aa0eee0aa00aa0000000000000000000000000
+00000000e07ee70e0000000000000000eeee0aa90eeee0aaaaaaaaa99009aaaaaaaa9900aa00aa00aa0aa0aa00aa0eee0aa00aa0000000000000000000000000
+00000000070ee0700000000000000000eeee09990eeeee09999999990ee09999999990e0990099009909909900990eee09900990000000000000000000000000
+0000000070eeee0e0000000000000000eeee00000eeeeee000000000eeee000000000ee00000000e00e00e00e0000eee00000000000000000000000000000000
 eeeee00eeeeeeeee0000eeeeeeee0000eeeeeeeeeeee0000eee0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
 eee00770eeeeeee077770eeeeee077770eeeeeeeeee0777700070eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
 ee077770eeeeee07777770eeee07007770eeeeeeee07700007770eeeee000000eeeeee00ee00e0000eeeeeee00000eee00000000000000000000000000000000
@@ -1639,6 +1697,19 @@ e07770eeee0770eee0770eeeee0770eee00eeeee0770eeeee0770eeeeee0770eeeeee0777000070e
 ee077700007770eeee07700000770eee0770eeeee07700000770eeeeeee0770eeeeeee077777770ee007700eeeee077000000000000000000000000000000000
 eee0077777700eeeeee007777700eeee0770eeeeee007777700eeeeeeee0770eeeeeeee0777700ee07777770eeee077000000000000000000000000000000000
 eeeee000000eeeeeeeeee00000eeeeeee00eeeeeeeee00000eeeeeeeeeee00eeeeeeeeee0000eeee00000000eeeee00e00000000000000000000000000000000
+eeee88888ee8eeeeee8888eeeeeeeeeeee8eeeeee888888eeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+ee888eeee888eeee88eeee88eeeeeeeee88eeeeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+ee8eeeeeee88eee88eeeeee88eeeeeeee888eeeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+e88eeeeeeee8eee8eeeeeeee8eeeeeee8e88eeeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+88eeeeeeeeeeee88eeeeeeee88eeeeee8ee88eeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+88eeeeeeeeeeee88eeeeeeee88eeeee8eee88eeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+88eeeeee88888e88eeeeeeee88eeeee8eee88eeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+88eeeeeeee88ee88eeeeeeee88eeee8eeeee88eeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+88eeeeeeee88ee88eeeeeeee88eeee88888888eeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
+e88eeeeeee88eee88eeeeeee8eeee8eeeeeee88eeee88eeeeee80000000000000000000000000000000000000000000000000000000000000000000000000000
+e888eeeeee88eee88eeeeee88eeee8eeeeeee88eeee88eeeeee80000000000000000000000000000000000000000000000000000000000000000000000000000
+ee888eeeee88eeee88eeee88eeee88eeeeeeee88eee88eeeee8e0000000000000000000000000000000000000000000000000000000000000000000000000000
+eeee8888888eeeeeee8888eeeee8888eeeee888888888888888e0000000000000000000000000000000000000000000000000000000000000000000000000000
 __map__
 0303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
