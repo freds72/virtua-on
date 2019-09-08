@@ -95,7 +95,8 @@ cstore()
 
 files = {
     'big_forest_genesis':'bigforest',
-    'acropolis_genesis':'acropolis'
+    'acropolis_genesis':'acropolis',
+    'ocean_genesis':'ocean'
 }
 for blend_file,cart_name in files.items():
     print("Exporting: {}.blend".format(blend_file))
