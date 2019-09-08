@@ -1021,8 +1021,7 @@ function _init()
 	-- clear screen
 	cls()
 	-- first track data cart
-	reload(0,0,0x4300,"track_0.p8")
-	track=unpack_track()
+	track=unpack_track("acropolis")
 	-- 3d models cart
 	reload(0,0,0x4300,"track_models.p8")
 	-- load regular 3d models
@@ -1274,12 +1273,12 @@ end
 
 -->8
 -- unpack data & models
-local cart_id,mem=1
+local cart_id,cart_name,mem=1,"track"
 local cart_msg="    virtua racing - boot\n"
 function mpeek()
 	if mem==0x4300 then
 		cart_msg=cart_msg.."\n"
-		reload(0,0,0x4300,"track_"..cart_id..".p8")
+		reload(0,0,0x4300,cart_name.."_"..cart_id..".p8")
 		cart_id += 1
 		mem=0
 	end
@@ -1442,8 +1441,9 @@ function unpack_models()
 end
 
 -- unpack multi-cart track
-function unpack_track()
-	mem=0
+function unpack_track(name)
+	cart_name,mem=name,0
+	reload(0,0,0x4300,cart_name.."_0.p8")
 	local model={
 		v={},
 		f={},

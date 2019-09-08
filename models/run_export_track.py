@@ -21,21 +21,6 @@ def call(args):
     #
     return exitcode, out, err
 
-# data buffer
-s = ""
-blend_file = 'big_forest_genesis'
-print("Exporting: {}.blend".format(blend_file))
-fd, path = tempfile.mkstemp()
-try:
-    os.close(fd)
-    exitcode, out, err = call([os.path.join(blender_dir,"blender.exe"),os.path.join(local_dir,blend_file + ".blend"),"--background","--python",os.path.join(local_dir,"blender_export_track.py"),"--","--out",path])
-    if err:
-        raise Exception('Unable to load: {}. Exception: {}'.format(blend_file,err))
-    print("exit: {} \n out:{}\n err: {}\n".format(exitcode,out,err))
-    with open(path, 'r') as outfile:
-        s = s + outfile.read()
-finally:
-    os.remove(path)
 
 # pico-8 map format
 #       0x0    gfx
@@ -64,7 +49,7 @@ def pack_variant(x):
         raise Exception('Unable to convert: {} into a byte: {}'.format(x,h))
     return h
 
-def to_cart(s,cart_id):
+def to_cart(s,cart_name,cart_id):
     cart="""\
 pico-8 cartridge // http://www.pico-8.com
 version 16
@@ -98,7 +83,7 @@ cstore()
 
     # save track cart + export cryptic music+sfx part
     sfx_data=s[2*0x3100:2*0x4300]
-    cart_path = os.path.join(local_dir, "..", "carts", "track_{}.p8".format(cart_id))
+    cart_path = os.path.join(local_dir, "..", "carts", "{}_{}.p8".format(cart_name,cart_id))
     f = open(cart_path, "w")
     f.write(cart.format(sfx_data))
     f.close()
@@ -108,13 +93,33 @@ cstore()
     if err:
         raise Exception('Unable to process pico-8 cart: {}. Exception: {}'.format(cart_path,err))
 
-# multi-cart export
-start = 0
-cart_id = 0
-cart_data = s[:2*0x4300]
-while len(cart_data)>0:
-    to_cart(cart_data, cart_id)
-    # next cart
-    cart_id += 1
-    start += 2*0x4300
-    cart_data = s[start:start+2*0x4300]
+files = {
+    'big_forest_genesis':'bigforest',
+    'acropolis_genesis':'acropolis'
+}
+for blend_file,cart_name in files.items():
+    print("Exporting: {}.blend".format(blend_file))
+    # data buffer
+    s = ""
+    fd, path = tempfile.mkstemp()
+    try:
+        os.close(fd)
+        exitcode, out, err = call([os.path.join(blender_dir,"blender.exe"),os.path.join(local_dir,blend_file + ".blend"),"--background","--python",os.path.join(local_dir,"blender_export_track.py"),"--","--out",path])
+        if err:
+            raise Exception('Unable to load: {}. Exception: {}'.format(blend_file,err))
+        print("exit: {} \n out:{}\n err: {}\n".format(exitcode,out,err))
+        with open(path, 'r') as outfile:
+            s = s + outfile.read()
+    finally:
+        os.remove(path)
+
+    # multi-cart export
+    start = 0
+    cart_id = 0
+    cart_data = s[:2*0x4300]
+    while len(cart_data)>0:
+        to_cart(cart_data, cart_name, cart_id)
+        # next cart
+        cart_id += 1
+        start += 2*0x4300
+        cart_data = s[start:start+2*0x4300]
