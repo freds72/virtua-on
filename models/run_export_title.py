@@ -64,6 +64,7 @@ def to_cart(s, name):
                 if len(map_data)>0:
                     cart += "__map__\n"
                     cart += re.sub("(.{256})", "\\1\n", map_data, 0, re.DOTALL)
+                    cart += "\n"
                 # skip any old data
                 state=2
 

@@ -141,7 +141,7 @@ def export_face(obcontext, f, vgroup_names, inner_faces):
  
     return fs, vgroup_name
 
-def export_layer(scale,l):
+def export_layer(l):
     # data
     s = ""
     layer = [ob for ob in scene.objects if ob.layers[l]]
@@ -252,9 +252,6 @@ def export_layer(scale,l):
         s += pack_variant(len(faces))
         for i in range(len(faces)):
             s += faces[i]['data']
-            f = faces[i]['face']
-            # normal
-            s += "{}{}{}".format(pack_double(f.normal.x), pack_double(f.normal.z), pack_double(f.normal.y))
                 
         s += pack_variant(len(vgroup_faces.keys()))
         for k,faces in vgroup_faces.items():
@@ -286,7 +283,7 @@ s += pack_string(name)
 
 # scale (custom scene property)
 model_scale = scene.get("scale", 1)
-s += "{:02x}".format(model_scale)
+s += "{:02x}".format(int(round(model_scale,0)))
 
 # model lod selection (+ default value)
 lod_dist = scene.get("lod_dist", [32])
@@ -298,7 +295,7 @@ for i in lod_dist:
 ln = 0
 ls = ""
 for i in range(3):
-    layer_data = export_layer(model_scale,i)
+    layer_data = export_layer(i)
     if len(layer_data)>0:
         ln += 1
         ls = ls + layer_data

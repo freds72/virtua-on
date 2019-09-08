@@ -327,12 +327,10 @@ def export_object(obcontext):
         faces.append({'face': f, 'data': face_data, 'bbox': verts_to_bbox2d(f.verts)})
 
     # push face data to buffer (inc. dual sided faces)
+    
     s += pack_variant(len(faces))
     for i in range(len(faces)):
         s += faces[i]['data']
-        f = faces[i]['face']
-        # normal
-        s += "{}{}{}".format(pack_double(f.normal.x), pack_double(f.normal.z), pack_double(f.normal.y))
 
     # voxels
     voxels=defaultdict(set)

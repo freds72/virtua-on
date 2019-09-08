@@ -1,11 +1,126 @@
 pico-8 cartridge // http://www.pico-8.com
 version 18
 __lua__
+-- main engine
+local raz
+local mode=0
+
+function _init()
+ --raz=edge_rasterizer()
+ --raz=poly_rasterizer()
+ --raz=trifill_rasterizer()
+ raz=hybrid_rasterizer()
+end
+
+local angle=0
+function _update()
+	local razz={
+		edge_rasterizer,
+		poly_rasterizer,
+		trifill_rasterizer,
+		hybrid_rasterizer
+	}
+	
+	if btnp(4) then
+	 mode=(mode+1)%#razz
+	 raz=razz[mode+1]()
+	end
+	 
+	--angle+=0.001
+	local cc,ss=cos(angle),-sin(angle)
+	local function rotate(x,y)
+		x-=64
+		y-=64
+		return 64+x*ss-y*cc,64+x*cc+y*ss
+	end
+	for i=1,8 do
+		cc,ss=cos(angle+0.23*i),-sin(angle+0.23*i)
+		local x0,y0=rotate(24,24)
+		local x1,y1=rotate(96,24)
+		local x2,y2=rotate(96,112)
+		local x3,y3=rotate(24,112)
+		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},1+i%13,i)
+ end
+ 
+end
+
+function _draw()
+ cls()
+ raz:draw()
+ local cpu=flr(1000*stat(1))/10
+ rectfill(0,0,127,6,8)
+ print(raz.name..": "..cpu.."%",2,1,7)
+end
+
+-->8
+-->8
+-- #putaflipinit
+function cflip() if(slowflip)flip()
+end
+ospr=spr
+function spr(...)
+ospr(...)
+cflip()
+end
+osspr=sspr
+function sspr(...)
+osspr(...)
+cflip()
+end
+omap=map
+function map(...)
+omap(...)
+cflip()
+end
+orect=rect
+function rect(...)
+orect(...)
+cflip()
+end
+orectfill=rectfill
+function rectfill(...)
+orectfill(...)
+cflip()
+end
+ocircfill=circfill
+function circfill(...)
+ocircfill(...)
+cflip()
+end
+ocirc=circ
+function circ(...)
+ocirc(...)
+cflip()
+end
+oline=line
+function line(...)
+oline(...)
+cflip()
+end
+opset=pset
+psetctr=0
+function pset(...)
+opset(...)
+psetctr+=1
+if(slowflip and psetctr%4==0)flip()
+end
+odraw=_draw
+function _draw()
+if(slowflip)extcmd("rec")
+odraw()
+if(slowflip)for i=0,99 do flip() end extcmd("video")cls()stop("gif saved")
+end
+menuitem(1,"put a flip in it!",function() slowflip=not slowflip end)
+
+-->8
+-- edge rasterizer
+-- 
 function edge_rasterizer()
 	local ymin,ymax=32000,-32000	
 	local edges={}
 	
  return {
+ name="edge",
 	-- add edge
 	add=function(self,verts,c,z)
 		local v0=verts[#verts]
@@ -110,106 +225,8 @@ function edge_rasterizer()
 	}
 end
 
-
 -->8
--- main engine
-local raz
-
-function _init()
- --raz=edge_rasterizer()
- --raz=poly_rasterizer()
- raz=trifill_rasterizer()
-end
-
-local angle=0
-function _update()
-	angle+=0.001
-	local cc,ss=cos(angle),-sin(angle)
-	local function rotate(x,y)
-		x-=64
-		y-=64
-		return 64+x*ss-y*cc,64+x*cc+y*ss
-	end
-	for i=1,8 do
-		cc,ss=cos(angle+0.23*i),-sin(angle+0.23*i)
-		local x0,y0=rotate(24,24)
-		local x1,y1=rotate(96,24)
-		local x2,y2=rotate(96,112)
-		local x3,y3=rotate(24,112)
-		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},1+i%13,i)
- end
- 
-end
-
-function _draw()
- cls()
- raz:draw()
- local cpu=flr(1000*stat(1))/10
- rectfill(0,0,127,6,8)
- print(cpu.."%",2,1,7)
-end
-
--->8
--->8
--- #putaflipinit
-function cflip() if(slowflip)flip()
-end
-ospr=spr
-function spr(...)
-ospr(...)
-cflip()
-end
-osspr=sspr
-function sspr(...)
-osspr(...)
-cflip()
-end
-omap=map
-function map(...)
-omap(...)
-cflip()
-end
-orect=rect
-function rect(...)
-orect(...)
-cflip()
-end
-orectfill=rectfill
-function rectfill(...)
-orectfill(...)
-cflip()
-end
-ocircfill=circfill
-function circfill(...)
-ocircfill(...)
-cflip()
-end
-ocirc=circ
-function circ(...)
-ocirc(...)
-cflip()
-end
-oline=line
-function line(...)
-oline(...)
-cflip()
-end
-opset=pset
-psetctr=0
-function pset(...)
-opset(...)
-psetctr+=1
-if(slowflip and psetctr%4==0)flip()
-end
-odraw=_draw
-function _draw()
-if(slowflip)extcmd("rec")
-odraw()
-if(slowflip)for i=0,99 do flip() end extcmd("video")cls()stop("gif saved")
-end
-menuitem(1,"put a flip in it!",function() slowflip=not slowflip end)
--->8
--- 
+-- trifill rasterizer
 function trifill_rasterizer()
 	local polys={}
 	local function sort(data)
@@ -264,6 +281,7 @@ function trifill_rasterizer()
 	 end
  end
  return {
+  name="trifill",
   add=function(self,verts,c,z)
   	add(polys,{v=verts,key=z,c=c})
   end,
@@ -328,10 +346,11 @@ function trifill(x0,y0,x1,y1,x2,y2,col)
 end
 
 -->8
+-- poly rasterizer
 function poly_rasterizer()
-	local ymin,ymax=32000,-32000	
 	local poly={}
 	return {
+	name="poly",
 	-- add edge
 	add=function(self,verts,c,z)
 		add(poly,{v=verts,c=c})
@@ -353,14 +372,63 @@ function poly_rasterizer()
  	   v0,y0=v1,y1
  	  end
  	  
+			--[[
  	  if #nodes>1 then
  	  	rectfill(nodes[1],y,nodes[2],y)
  	  end
-				--[[
- 	  for i=1,#nodes,2 do
- 	  	rectfill(nodes[i],y,nodes[i+1],y,7)
- 	  end
  	  ]]
+ 	  for i=1,#nodes,2 do
+ 	  	rectfill(nodes[i],y,nodes[i+1],y)
+ 	  end
+ 	 end
+  end
+  poly={}
+ end
+ }
+end
+
+-->8
+-- hybrid rasterizer
+function hybrid_rasterizer()
+	local poly={}
+
+	return {
+	name="hybrid",
+	-- add edge
+	add=function(self,verts,c,z)
+		local v0=verts[#verts]
+		for i=1,#verts do
+			local v1=verts[i]
+			-- edge building
+			-- target
+		 v0[3]=v1[2]
+		 -- dx
+		 v0[4]=(v1[1]-v0[1])/(v1[2]-v0[2])
+			--end
+			v0=v1
+		end
+		add(poly,{v=verts,c=c})
+	end,
+ draw=function(self)
+	 for k=1,#poly do
+ 	 local v=poly[k].v
+  	color(poly[k].c)
+   -- todo:
+   -- mix with edge
+   -- use xmin/x to draw rectfills
+   for y=0,127 do
+ 	  local xmin
+ 	  for v0 in all(v) do
+ 	  	local y0,y1=v0[2],v0[3]
+ 	   if (y0>y and y1<=y) or (y1>y and y0<=y) then
+ 	    local x=v0[1]+(y-y0)*v0[4]
+ 	    if xmin then
+ 	     rectfill(xmin,y,x,y)
+ 	    else
+ 	    	xmin=x
+ 	    end
+ 	   end
+ 	  end
  	 end
   end
   poly={}

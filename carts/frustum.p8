@@ -305,7 +305,7 @@ function make_cam()
 	local view_mode=0
 	-- view offset/angle/lag
 	local view_pov={
-		{-2.2,1.5,0.2},
+		{-1.65,1.125,0.2},
 		{-0.7,0.3,0.1},
 		{-0.01,0.11,0.6}
 	}
@@ -901,11 +901,7 @@ function play_state()
 			printf(tostr(ceil(remaining_t/30)),64,9,xlfont)
 			
 			-- speed
-			local x=printf(tostr(flr(plyr:get_speed())),22,110,xlfont)
-			palt(14,true)
-			palt(0,false)
-   spr(41,x,110,4,2)
-   palt()
+			printb(flr(plyr:get_speed()).."km/h",2,110,10,0)
    
 			-- blink go!
 			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,50)
@@ -1021,7 +1017,8 @@ function _init()
 	-- clear screen
 	cls()
 	-- first track data cart
-	track=unpack_track("acropolis")
+	local track_name=stat(6)=="" and "bigforest" or stat(6)
+	track=unpack_track(track_name)
 	-- 3d models cart
 	reload(0,0,0x4300,"track_models.p8")
 	-- load regular 3d models
@@ -1358,8 +1355,9 @@ end
 
 function unpack_model(model,scale)
 	-- vertices
+	local v=model.v
 	unpack_array(function()
-		add(model.v,unpack_v(scale))
+		add(v,unpack_v(scale))
 	end)
 
 	-- faces
@@ -1391,7 +1389,8 @@ function unpack_model(model,scale)
 			end
 		end
 		-- normal
-		f.n=unpack_v()
+		f.n=v_cross(make_v(v[f[1]],v[f[f.ni]]),make_v(v[f[1]],v[f[2]]))
+		v_normz(f.n)
 		-- viz check
 		f.cp=v_dot(f.n,model.v[f[1]])
 
@@ -1403,7 +1402,9 @@ function unpack_models()
 	-- for all models
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
-		scale*=0.75
+		scale=1/32
+		printh(name..": "..scale)
+
 		unpack_array(function()
 			local d=unpack_double()
 			assert(d<127,"lod distance too large:"..d)
