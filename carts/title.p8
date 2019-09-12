@@ -535,7 +535,7 @@ function selection_state()
 						yield()
 					end
 					-- load track
-					load("frustum.p8 ",nil,track_spr[track+1].file)
+					load("frustum.p8",nil,track_spr[track+1].file)
 				end)
 			end
 		end
