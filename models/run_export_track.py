@@ -93,6 +93,32 @@ cstore()
     if err:
         raise Exception('Unable to process pico-8 cart: {}. Exception: {}'.format(cart_path,err))
 
+def export_models():
+    # data buffer
+    s = ""
+
+    # 3d models
+    file_list = ['car_genesis']
+    s = s + "{:02x}".format(len(file_list))
+    for blend_file in file_list:
+        print("Exporting: {}.blend".format(blend_file))
+        fd, path = tempfile.mkstemp()
+        try:
+            os.close(fd)
+            exitcode, out, err = call([os.path.join(blender_dir,"blender.exe"),os.path.join(local_dir,blend_file + ".blend"),"--background","--python",os.path.join(local_dir,"blender_export.py"),"--","--out",path])
+            if err:
+                raise Exception('Unable to loadt: {}. Exception: {}'.format(blend_file,err))
+            print("exit: {} \n out:{}\n err: {}\n".format(exitcode,out,err))
+            with open(path, 'r') as outfile:
+                s = s + outfile.read()
+        finally:
+            os.remove(path)
+
+    return s
+
+
+model_data = export_models()
+
 files = {
     'big_forest_genesis':'bigforest',
     'acropolis_genesis':'acropolis',
@@ -113,6 +139,10 @@ for blend_file,cart_name in files.items():
             s = s + outfile.read()
     finally:
         os.remove(path)
+
+    # append model data to track
+    s += model_data
+    
 
     # multi-cart export
     start = 0

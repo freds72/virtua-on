@@ -156,7 +156,7 @@ def get_bezier_points(spline, clean=True):
         
     return master_point_list
 
-def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
+def export_face(obcontext, f, vgroups, inner_faces, ground_faces, track_faces):
     fs = ""
     # default values
     is_dual_sided = False
@@ -207,6 +207,7 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
         (len(borders)<<5) +
         (16 if ground_faces is not None and f in ground_faces else 0) + 
         (8 if has_inner_faces else 0) + 
+        (4 if track_faces is not None and f in track_faces else 0) + 
         (2 if len(verts)==4 else 0) + 
         (1 if is_dual_sided else 0))
     # color
@@ -220,7 +221,7 @@ def export_face(obcontext, f, vgroups, inner_faces, ground_faces):
     if has_inner_faces:
         fs += pack_variant(len(inner_faces))
         for inner_face in inner_faces:
-            fs += export_face(obcontext, inner_face, None, None, None)
+            fs += export_face(obcontext, inner_face, None, None, None, None)
 
     # border indices?
     if len(borders)>0:
@@ -263,6 +264,9 @@ def export_object(obcontext):
     # find ground faces
     ground_faces=find_faces_by_group(bm, obcontext, 'GROUND_FACE')
     
+    # track faces
+    track_faces=find_faces_by_group(bm, obcontext, 'TRACK_FACE')
+
     # all ground vertices
     ground_vertices = [obdata.vertices[v.index] for face in ground_faces for v in face.verts]
 
@@ -323,7 +327,7 @@ def export_object(obcontext):
         inner_faces = inner_per_face.get(f.index)
         if inner_faces and len(inner_faces)>127:
             raise Exception('Face: {} too many inner faces: {}'.format(f.index,len(inner_faces)))
-        face_data = export_face(obcontext, f, vgroups, inner_faces, ground_faces)
+        face_data = export_face(obcontext, f, vgroups, inner_faces, ground_faces, track_faces)
         faces.append({'face': f, 'data': face_data, 'bbox': verts_to_bbox2d(f.verts)})
 
     # push face data to buffer (inc. dual sided faces)
@@ -395,6 +399,11 @@ def export_checkpoints():
 # ---------------------------------------------------------
 # main
 track_data = ""
+
+# background map ID (custom scene property)
+map_id = scene.get("id", 0)
+print("map id:{}".format(map_id))
+track_data += "{:02x}".format(int(round(map_id,0)))
 
 # export start position
 # note: direction is always fwd
