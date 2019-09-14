@@ -1033,10 +1033,13 @@ function _init()
 	-- integrated fillp/color
 	poke(0x5f34,1)
 
-	-- clear screen
-	cls()
-	-- first track data cart
-	local track_name=stat(6)=="" and "bigforest" or stat(6)
+	-- track name (from params)
+	local track_name=stat(6)
+	if track_name=="" then
+		-- starting without context
+		cls(1)
+		track_name="bigforest"
+	end
 	track=unpack_track(track_name)
 	-- load regular 3d models
 	unpack_models()
@@ -1288,19 +1291,18 @@ end
 -->8
 -- unpack data & models
 local cart_id,cart_name,mem=1,"track"
-local cart_msg="    virtua racing - boot\n"
+local cart_progress=0
 function mpeek()
 	if mem==0x4300 then
-		cart_msg=cart_msg.."\n"
+		cart_progress=0
 		reload(0,0,0x4300,cart_name.."_"..cart_id..".p8")
 		cart_id += 1
 		mem=0
 	end
 	local v=peek(mem)
 	if mem%779==0 then
-		cart_msg=cart_msg.."█"
-		?cart_msg,0,9,1
-		?cart_msg,0,8,7
+		cart_progress+=1
+		rectfill(0,120,shl(cart_progress,4),127,cart_id%2==0 and 7 or 1)
 		flip()
 	end
 	mem+=1
