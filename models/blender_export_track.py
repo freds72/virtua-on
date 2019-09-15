@@ -292,14 +292,15 @@ def export_object(obcontext):
 
     for f in detail_faces:
         # find similar normals
-        for of in [of for of in other_faces if f.normal.dot(of.normal)>0.98]:
+        for of in [of for of in other_faces if f.normal.dot(of.normal)>0.2]:
+            # distance?
             v = of.verts[0].co - f.verts[0].co
-            if abs(f.normal.dot(v))<0.01:  
+            if abs(f.normal.dot(v))<0.1:  
                 # print("{} <-coplanar-> {}".format(f.index, of.index))
                 # inside?
                 is_inside = True    
                 for of_point in of.verts:
-                    p0 = f.verts[len(f.verts)-1].co - of_point.co
+                    p0 = f.verts[len(f.verts)-1].co - of_point.co                    
                     # shared vertex?
                     if p0.length>epsilon:
                         for i_point in range(len(f.verts)):

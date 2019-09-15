@@ -307,7 +307,7 @@ function make_cam()
 	local view_pov={
 		{-1.65,1.125,0.2},
 		{-0.7,0.3,0.1},
-		{-0.01,0.11,0.6}
+		{-0.01,0.1,0.6}
 	}
 	local current_pov=v_clone(view_pov[view_mode+1])
 
@@ -634,13 +634,22 @@ function make_car(model,p,angle)
 				pos[2]=newpos[2]
 				oldf=newf
 			end
+			-- on ground: limit max speed
+			max_rpm=0.6			
+			if oldf and band(oldf.flags,0x4)==0 then
+				max_rpm=0.4
+			end
 			-- above 0
 			pos[2]=max(pos[2])
 			-- collision
 			if oldf and oldf.borders then
-				local hit,force=face_collide(oldf,pos,0.25)
+				local hit,force,hit_n=face_collide(oldf,pos,0.25)
 				if hit then
 					v_add(pos,force)
+					--simulate sliding contact (no impact on velocity) vs. direct hit (massive slowdown)
+					local friction=v_dot(velocity,hit_n)
+					-- non separating?
+					if(friction<-0.01) v_scale(velocity,1+friction)
 				end
 			end
 
@@ -665,6 +674,8 @@ function make_plyr(p,angle)
 	-- backup parent methods
 	local body_update=body.update
 
+	sfx(0)
+	
 	body.model=all_models["car"]
 	body.control=function(self)	
 		local da=0
@@ -683,10 +694,22 @@ function make_plyr(p,angle)
 		body_update(self)
 		rpm*=0.97
 
+		local vol=self:get_speed()/400
+ 	local rpmvol=band(0x3f,flr(32*vol))
+ 	-- sfx 0
+ 	local addr=0x3200+68*0
+ 	-- adjust pitch
+ 	poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+		-- base engine
+		rpmvol=max(8,rpmvol-8)
+ 	addr+=2
+ 	poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+
 		-- rough terrain?
 		local ground=self:get_ground()		
 		if ground and band(ground.flags,0x4)==0 then
-			cam:shake(rnd(),rnd(),1)
+			local shake_force=self:get_speed()/200
+			cam:shake(rnd(shake_force),rnd(shake_force),1)
 		end
 	end
 	-- wrapper
@@ -816,23 +839,24 @@ function find_face(p,oldf)
 	end
 	-- not found
 end
+-- reports hit result + correcting force + border normal
 function face_collide(f,p,r)
-	local force,hit={0,0,0}
+	local force,hit,n={0,0,0}
 	for _,b in pairs(f.borders) do
 		local pv=make_v(b.v,p)
 		local dist=v_dot(pv,b.n)
 		if dist<r then
-			hit=true
+			hit,n=true,b.n
 			v_add(force,b.n,r-dist)
 		end
 	end
-	return hit,force
+	return hit,force,n
 end
 
 -- game states
 -- transition to next state
-function next_state(state)
-	draw_state,update_state=state()
+function next_state(state,...)
+	draw_state,update_state=state(...)
 end
 
 function start_state()
@@ -844,6 +868,9 @@ function start_state()
 
 	-- create player in correct direction
 	plyr=add(actors,make_plyr(track.start_pos,0))
+
+	-- reset cam	
+	cam=make_cam()
 
 	-- npcs
 	--[[
@@ -869,9 +896,9 @@ function start_state()
 		end,
 		-- update
 		function()
-			if(ttl%30==0) sfx(1)
+			if(ttl%30==0) sfx(2)
 			ttl-=1
-			if(ttl<0) sfx(2) next_state(play_state)
+			if(ttl<0) sfx(3) next_state(play_state)
 		end
 end
 
@@ -890,8 +917,9 @@ function play_state()
 	local laps={}
 
 	-- remaining time before game over (+ some buffer time)
-	local lap_t,remaining_t,best_t,best_i=0,30*65,32000,1
-	
+	local lap_t,total_t,remaining_t,best_t,best_i=0,0,30*65,32000,1
+	local extend_time_t=0
+
 	-- go display
 	local go_ttl=30
 
@@ -914,6 +942,8 @@ function play_state()
 			-- blink go!
 			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,50)
 
+			-- extend time message
+			if(extend_time_t>0 and extend_time_t%30<15) printr("extend time",nil,28,10,4)
 			local y=9
 			for i=1,#laps do
 				printb(i,90,y,9,0)
@@ -942,10 +972,12 @@ function play_state()
 		end,
 		-- update
 		function()
+			total_t+=1
 			remaining_t-=1
 			go_ttl-=1
+			extend_time_t-=1
 			if remaining_t==0 then
-				next_state(gameover_state)
+				next_state(gameover_state,false,total_t)
 				return
 			end
 			lap_t+=1
@@ -953,10 +985,13 @@ function play_state()
 			if v_len(make_v({plyr.pos[1],0,plyr.pos[3]},p))<r then
 				checkpoint+=1
 				remaining_t+=30*10
+				extend_time_t=30*5
 
 				-- time extension!
 				music(extended_time_music)
-
+				-- placeholder
+				sfx(4)
+				
 				-- closed lap?
 				if checkpoint%n==0 then
 					checkpoint=0
@@ -971,7 +1006,7 @@ function play_state()
 					end
 					-- done?
 					if #laps==3 then
-						next_state(goal_state)
+						next_state(goal_state,true,total_t)
 					end
 					-- next lap
 					lap_t=0
@@ -983,7 +1018,7 @@ function play_state()
 		end
 end
 
-function gameover_state()
+function gameover_state(win,total_t)
 	local ttl=900
 	local angle=-0.5
 
@@ -992,39 +1027,28 @@ function gameover_state()
 	return 
 		-- draw
 		function()
-			-- rotating game over
-			print3d(39,32,57,32,50,angle)
-			if(ttl%4<2) printb("press ❎/🅾️ to continue",24,110,7,0)
-		end,
-		-- update
-		function()
-			ttl-=1
-			angle+=0.01
-			if btnp(4) or btnp(5) or ttl<0 then
-				next_state(start_state)
+			-- rotating game over/goal
+			if win then 
+				print3d(32,0,65,16,50,angle)
+			else
+				print3d(39,32,57,32,50,angle)
 			end
-		end
-end
 
-function goal_state()
-	local ttl=900
-	local angle=-0.5
+			-- total time
+			printb(time_tostr(total_t).." total time",nil,72,9,0)
 
-	music(goal_music)
-
-	return 
-		-- draw
-		function()
-			-- rotating game over
-			print3d(0,64,51,12,50,angle)
-			if(ttl%4<2) printb("press ❎/🅾️ to continue",24,110,7,0)
+			-- 
+			if(ttl%32<16) printb("❎ select track",34,120,9,0) printr("🅾️ start over",37,110,10,4) 
 		end,
 		-- update
 		function()
 			ttl-=1
 			angle+=0.01
-			if btnp(4) or btnp(5) or ttl<0 then
+			if btnp(4) or ttl<0 then
 				next_state(start_state)
+			elseif btnp(5) then
+				-- back to selection title
+				load("title.p8")
 			end
 		end
 end
@@ -1048,8 +1072,6 @@ function _init()
 
 	-- init state machine
 	next_state(start_state)
-
-	cam=make_cam()
 end
 
 function _update()
@@ -1302,7 +1324,7 @@ function mpeek()
 	local v=peek(mem)
 	if mem%779==0 then
 		cart_progress+=1
-		rectfill(0,120,shl(cart_progress,4),127,cart_id%2==0 and 7 or 1)
+		rectfill(0,120,shl(cart_progress,4),127,cart_id%2==0 and 1 or 7)
 		flip()
 	end
 	mem+=1
@@ -1602,13 +1624,14 @@ function time_tostr(t)
 end
 
 function printb(s,x,y,c1,c2)
+	x=x or 64-shl(#s,1)
 	?s,x,y+1,c2 or 1
 	?s,x,y,c1
 end
 
 -- raised print
 function printr(s,x,y,c,c2)
-	x=x or 64-(#s*2.5)
+	x=x or 64-shl(#s,1)
 	local sy=c2 and -2 or -1
 	for i=-1,1 do
         for j=sy,1 do
@@ -1630,11 +1653,11 @@ function printf(s,x,y,font)
 		x-=#s*w
 	else
 		-- centered
-		x=64-#s*w/2
+		x=64-shr(#s*w,1)
 	end
 	for i=1,#s do
-		local sx,sy=font[sub(s,i,i)]*w,77
-		sspr(sx,sy,w,13,x,y)		
+		local sx=font[sub(s,i,i)]*w
+		sspr(sx,64,w,13,x,y)		
 		x+=w
 	end
 	
@@ -1674,22 +1697,22 @@ function print3d(sx,sy,sw,sh,y,angle)
 end
 
 __gfx__
-00000000cccccccccccccccccccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cccccc7777cccccccccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000ccccc7777777cccccccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cccc777777777ccccccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cc777777777777cccccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000c7777777777777cccccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000c77777777777777ccccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-000000007777777777777777cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-cccccccc77777777cccccccc00000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-cccccccc77777777cccccccc00000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-cccccccc777777777777777700000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-cccccccc777777777777777700000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-c6c6c6c6777777777777777777770000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-6c6c6c6c777777777777777777777700eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-66666666777777777777777777777770eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-77777777777777777777777777777777eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+00000000cccccccccccccccccccccccceeeee00000ee0eeeeeeee00000eeeeeeeeeeeee0eeeeeeee000000eeeeeeee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+00000000cccccc7777cccccccccccccceeee0888880080eeeee008888800eeeeeeeeee080eeeeee08888880eeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+00000000ccccc7777777cccccccccccceee08800008880eeee08800000880eeeeeeee0880eeeeeee008800eeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+00000000cccc777777777cccccccccccee0800eeee0880eee0880eeeee0880eeeeeee08880eeeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+00000000cc777777777777cccccccccce0880eeeeee080eee0880eeeee0880eeeeee080880eeeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+00000000c7777777777777cccccccccce080eeeeeeee0eee0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+00000000c77777777777777ccccccccc0880eeeee000000e0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+000000007777777777777777cccccccc0880eeee088888800880eeeeeee0880eeee080e0880eeeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+cccccccc77777777cccccccc000000000880eeeee008800e0880eeeeeee0880eeee080000880eeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+cccccccc77777777cccccccc000000000880eeeeee0880ee0880eeeeeee0880eee0888888880eeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+cccccccc7777777777777777000000000880eeeeee0880ee0880eeeeeee0880eee0800000880eeeee0880eeeeee0e080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+cccccccc777777777777777700000000e0880eeeee0880eee0880eeeee0880eee080eeeee0880eeee0880eeeee080e0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+c6c6c6c6777777777777777777770000e08880eeee0880eee0880eeeee0880eee080eeeee0880eeee0880eeee0880e00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+6c6c6c6c777777777777777777777700ee088800008880eeee08800000880eee0880eeeee08880ee008800000880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+66666666777777777777777777777770eee0088888800eeeeee008888800eee088880eee08888800888888888880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+77777777777777777777777777777777eeeee000000eeeeeeeeee00000eeeeee0000eeeee00000ee00000000000eee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 111111116666666633333333cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee333333333333333300000000
 c1c1c1c16d6d6d6d33333333cccccc33eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee333333333333333300000000
 111111113636363633333333ccccc333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee333333333333333300000000
@@ -1738,19 +1761,6 @@ e07770eeee0770eee0770eeeee0770eee00eeeee0770eeeee0770eeeeee0770eeeeee0777000070e
 ee077700007770eeee07700000770eee0770eeeee07700000770eeeeeee0770eeeeeee077777770ee007700eeeee077000000000000000000000000000000000
 eee0077777700eeeeee007777700eeee0770eeeeee007777700eeeeeeee0770eeeeeeee0777700ee07777770eeee077000000000000000000000000000000000
 eeeee000000eeeeeeeeee00000eeeeeee00eeeeeeeee00000eeeeeeeeeee00eeeeeeeeee0000eeee00000000eeeee00e00000000000000000000000000000000
-eeee88888ee8eeeeee8888eeeeeeeeeeee8eeeeee888888eeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-ee888eeee888eeee88eeee88eeeeeeeee88eeeeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-ee8eeeeeee88eee88eeeeee88eeeeeeee888eeeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-e88eeeeeeee8eee8eeeeeeee8eeeeeee8e88eeeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-88eeeeeeeeeeee88eeeeeeee88eeeeee8ee88eeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-88eeeeeeeeeeee88eeeeeeee88eeeee8eee88eeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-88eeeeee88888e88eeeeeeee88eeeee8eee88eeeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-88eeeeeeee88ee88eeeeeeee88eeee8eeeee88eeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-88eeeeeeee88ee88eeeeeeee88eeee88888888eeeee88eeeeeee0000000000000000000000000000000000000000000000000000000000000000000000000000
-e88eeeeeee88eee88eeeeeee8eeee8eeeeeee88eeee88eeeeee80000000000000000000000000000000000000000000000000000000000000000000000000000
-e888eeeeee88eee88eeeeee88eeee8eeeeeee88eeee88eeeeee80000000000000000000000000000000000000000000000000000000000000000000000000000
-ee888eeeee88eeee88eeee88eeee88eeeeeeee88eee88eeeee8e0000000000000000000000000000000000000000000000000000000000000000000000000000
-eeee8888888eeeeeee8888eeeee8888eeeee888888888888888e0000000000000000000000000000000000000000000000000000000000000000000000000000
 ee000000eeeee0000eeeee000000eeee000000eeeeeee000000000000000ee000000ee0000000000ee000000eeee000000ee0000000000000000000000000000
 e0aaaaaa0eee0aa90eeee0aaaaaa0ee0aaaaaa0eeeee0aaa900aaaaaaa90e0aaaaaa0e0aaaaaaa90e0aaaaaa0ee0aaaaaa0e0000000000000000000000000000
 0a99999a90e0aaa90eee0a99999a900a99999a90eee0aaaa900a999999900a99999a900a99999a900a99999a900a99999a900000000000000000000000000000
@@ -1782,3 +1792,9 @@ __map__
 2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+__sfx__
+00010002201501b750131500415004150000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00010002281301d720211301c250231501c2501b2500d1501f2500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000a00002b05033000220002800000000000002200000000000000000000000000000000023000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000900002d0502d0502d0502d0502d05029400233000f400000000940000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0004000025050300503005025050000002e00031000000003a00030000000002e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
