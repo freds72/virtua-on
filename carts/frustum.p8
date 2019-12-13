@@ -89,19 +89,7 @@ function make_q(v,angle)
 	        v[3]*s,
 	        cos(angle)}
 end
-function q_clone(q)
-	return {q[1],q[2],q[3],q[4]}
-end
 
-function q_x_q(a,b)
-	local qax,qay,qaz,qaw=a[1],a[2],a[3],a[4]
-	local qbx,qby,qbz,qbw=b[1],b[2],b[3],b[4]
-        
-	a[1]=qax*qbw+qaw*qbx+qay*qbz-qaz*qby
-	a[2]=qay*qbw+qaw*qby+qaz*qbx-qax*qbz
-	a[3]=qaz*qbw+qaw*qbz+qax*qby-qay*qbx
-	a[4]=qaw*qbw-qax*qbx-qay*qby-qaz*qbz
-end
 function m_from_q(q)
 	local x,y,z,w=q[1],q[2],q[3],q[4]
 	local x2,y2,z2=x+x,y+y,z+z
@@ -121,6 +109,7 @@ function m_x_v(m,v)
 	local x,y,z=v[1],v[2],v[3]
 	return {m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]}
 end
+-- optimized 4x4 matrix mulitply
 function m_x_m(a,b)
 	local a11,a12,a13,a14=a[1],a[5],a[9],a[13]
 	local a21,a22,a23,a24=a[2],a[6],a[10],a[14]
@@ -169,12 +158,6 @@ function make_m_from_v_angle(up,angle)
 		0,0,0,1
 	}
 end
--- only invert 3x3 part
-function m_inv(m)
-	m[2],m[5]=m[5],m[2]
-	m[3],m[9]=m[9],m[3]
-	m[7],m[10]=m[10],m[7]
-end
 -- inline matrix vector multiply invert
 -- inc. position
 function m_inv_x_v(m,v)
@@ -183,7 +166,9 @@ function m_inv_x_v(m,v)
 end
 
 function m_set_pos(m,v)
-	m[13],m[14],m[15]=v[1],v[2],v[3]
+	m[13]=v[1]
+	m[14]=v[2]
+	m[15]=v[3]
 end
 -- returns basis vectors from matrix
 function m_right(m)
@@ -369,7 +354,11 @@ function make_cam()
 			v_add(pos,m_up(m),current_pov[2])
 			
 			-- inverse view matrix
-			m_inv(m)
+			-- only invert orientation part
+			m[2],m[5]=m[5],m[2]
+			m[3],m[9]=m[9],m[3]
+			m[7],m[10]=m[10],m[7]
+
 			self.m=m_x_m(m,{
 				1,0,0,0,
 				0,1,0,0,
@@ -1109,11 +1098,13 @@ local v_cache_cls={
 		local ax,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[3]*x+m[7]*y+m[11]*z+m[15]
 	
 		local outcode=az>z_near and k_far or k_near
-		if ax>az then outcode+=k_right
-		elseif -ax>az then outcode+=k_left
-		end	
+		if(ax>az) outcode+=k_right
+		if(-ax>az) outcode+=k_left
+		
+		-- slower (0.2%)
+		-- -shl(shr(az-z_near,31),17)-shl(shr(az-ax,31),18)-shl(shr(az+ax,31),19)}
 
-		t[k]={ax,m[2]*x+m[6]*y+m[10]*z+m[14],az,outcode=outcode}
+		t[k]={ax,m[2]*x+m[6]*y+m[10]*z+m[14],az,outcode=outcode} 
 		return t[k]
 	end
 }
@@ -1586,21 +1577,14 @@ function z_poly_clip(znear,v)
 	local res={}
 	local v0,v1,d1,t,r=v[#v]
 	local d0=-znear+v0[3]
- 	-- use local closure
- 	local clip_line=function()
- 		local r,t=make_v(v0,v1),d0/(d0-d1)
- 		v_scale(r,t)
- 		v_add(r,v0)
- 		res[#res+1]=r
- 	end
 	for i=1,#v do
 		v1=v[i]
 		d1=-znear+v1[3]
 		if d1>0 then
-			if(d0<=0) clip_line()
+			if(d0<=0) res[#res+1]=v_lerp(v0,v1,d0/(d0-d1))
 			res[#res+1]=v1
 		elseif d0>0 then
-   clip_line()
+			res[#res+1]=v_lerp(v0,v1,d0/(d0-d1))
 		end
 		v0,d0=v1,d1
 	end

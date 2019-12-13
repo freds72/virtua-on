@@ -371,13 +371,6 @@ end
 -- transition to next state
 local states={}
 
--- unpack a list into an argument list
--- trick from: https://gist.github.com/josefnpat/bfe4aaa5bbb44f572cd0
-function munpack(t, from, to)
- local from,to=from or 1,to or #t
- if(from<=to) return t[from], munpack(t, from+1, to)
-end
-
 function pop_state()
 	assert(#states>0,"missing base state")	
 	states[#states]=nil
