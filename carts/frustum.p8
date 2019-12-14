@@ -381,31 +381,28 @@ function make_cam()
 				x1,y1=x2,y2
 			end
 		end,
-		visible_tiles=function(self)
+		visible_tiles=function(self,fn)
 			local x0,y0,x,y=to_tile_coords(self.pos)
-			local tiles={[x0+shl(y0,5)]=0} 
+			local k=x0+shl(y0,5)
+			fn(k,0)
+			local tiles,angle={[k]=0},self.angle 
    
-   			for i=1,16 do   	
-				local a=angles[i]+self.angle
-				local v,u=cos(a),-sin(a)
+   			for i,a in pairs(angles) do
+				local v,u=cos(a+angle),-sin(a+angle)
 				
-				local mapx,mapy=x0,y0
-			
-				local ddx,ddy=1/u,1/v
-				local mapdx,distx
+				local mapx,mapy,ddx,ddy,mapdx,mapdy,distx,disty=x0,y0,1/u,1/v,1,1
 				if u<0 then
-					mapdx,ddx=-1,-ddx
+					mapdx=-1
+					ddx=-ddx
 					distx=(x-mapx)*ddx
 				else
-					mapdx=1
 					distx=(mapx+1-x)*ddx
 				end
-				local mapdy,disty
 				if v<0 then
-					mapdy,ddy=-1,-ddy
+					mapdy=-1
+					ddy=-ddy
 					disty=(y-mapy)*ddy
 				else
-					mapdy=1
 					disty=(mapy+1-y)*ddy
 				end	
 				for dist=0,1 do
@@ -417,8 +414,10 @@ function make_cam()
 						mapy+=mapdy
 					end
 					-- non solid visible tiles
-					if band(bor(mapx,mapy),0xffe0)==0 then
-						tiles[mapx+shl(mapy,5)]=dist
+					k=mapx+shl(mapy,5)
+					if band(bor(mapx,mapy),0xffe0)==0 and not tiles[k] then
+						fn(k,dist)
+						tiles[k]=dist
 					end
 				end				
 			end	
@@ -816,8 +815,8 @@ function find_face(p,oldf)
 		if(newf) return newf,newp
 	end
 	-- voxel?
-	local x,z=flr(p[1]/8+16),flr(p[3]/8+16)
-	local faces=track.ground[x+32*z]
+	local x,z=flr(shr(p[1],3)+16),flr(shr(p[3],3)+16)
+	local faces=track.ground[x+shl(z,5)]
 	if faces then
 		for _,f in pairs(faces) do
 			if f!=oldf then
@@ -1097,7 +1096,8 @@ local v_cache_cls={
 		local x,y,z=v[1],v[2],v[3]
 		local ax,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[3]*x+m[7]*y+m[11]*z+m[15]
 	
-		local outcode=az>z_near and k_far or k_near
+		local outcode=k_near
+		if(az>z_near) outcode=k_far
 		if(ax>az) outcode+=k_right
 		if(-ax>az) outcode+=k_left
 		
@@ -1128,13 +1128,13 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 			-- mix of near/far verts?
 			if outcode==0 then
 	   			-- average before changing verts
-				y/=#verts
-				z/=#verts
+				y/=face.ni
+				z/=face.ni
 
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
-					out[n]={key=1/(y*y+z*z),f=face,v=verts,dist=dist,center=center}
+					out[n]={key=1/(y*y+z*z),f=face,v=verts,dist=dist}
 				 	-- 0.1% faster vs [#out+1]
 				 	n+=1
 				end
@@ -1167,9 +1167,7 @@ function collect_model_faces(model,m,parts,out)
 	m=m_x_m(cam.m,m)
 
 	-- vertex cache (and model context)
-	local p={m=m,v=model.v}
-	
-	setmetatable(p,v_cache_cls)
+	local p=setmetatable({m=m,v=model.v},v_cache_cls)
 
 	-- main model
 	collect_faces(model.f,cam_pos,p,out)
@@ -1256,20 +1254,15 @@ function _draw()
  	end
 
 	-- track
-	local v_cache={m=cam.m,v=track.v}
-	setmetatable(v_cache,v_cache_cls)
-
-	local tiles=cam:visible_tiles()
+	local v_cache=setmetatable({m=cam.m,v=track.v},v_cache_cls)
 
 	local out={}
-	-- get visible voxels
-	for k,dist in pairs(tiles) do
-	--for k,_ in pairs(track.voxels) do
+	local tiles=cam:visible_tiles(function(k,dist)
 		local faces=track.voxels[k]
 		if faces then
 			collect_faces(faces,cam.pos,v_cache,out,dist)
 		end 
-	end
+	end)
 
 	sort(out)
 	draw_faces(out,v_cache)
@@ -1291,11 +1284,11 @@ function _draw()
 
 	sort(out)
 	draw_faces(out)
-
+	
 	-- hud and game state display
 	draw_state()
 
-	local cpu=flr(1000*stat(1))/10
+	local cpu=stat(1)
 	local mem=ceil(stat(0))
 	cpu=cpu.."%\n"..mem.."kb\n"--.."\n"..cam.pos[1].."/"..cam.pos[3]
 	printb(cpu,2,2,7,2)
@@ -1371,7 +1364,7 @@ function unpack_string()
 end
 
 function unpack_face()
-	local f={flags=unpack_int(),c=unpack_int()}
+	local f={flags=unpack_int(),c=unpack_int(),session=0xffff}
 	if(f.c==0x50) f.c=0x0150
 	f.c+=0x1000.a5a5
 
