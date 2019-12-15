@@ -368,17 +368,41 @@ function make_cam()
 			
 			self.pos=pos
 		end,
-		project_poly=function(self,p,c)
+		project_poly=function(self,p,col)
+			color(col)
 			local p0,p1=p[1],p[2]
 			-- magic constants = 89.4% vs. 90.9%
 			-- shl = 79.7% vs. 80.6%
-			local x0,y0=63.5+flr(shl(p0[1]/p0[3],6)),63.5-flr(shl(p0[2]/p0[3],6))
-			local x1,y1=63.5+flr(shl(p1[1]/p1[3],6)),63.5-flr(shl(p1[2]/p1[3],6))
+			local w0,w1=63.5/p0[3],63.5/p1[3]
+			local x0,y0,x1,y1=63.5+flr(p0[1]*w0),63.5-flr(p0[2]*w0),63.5+flr(p1[1]*w1),63.5-flr(p1[2]*w1)
+			local x01,y01=x0,y0
 			for i=3,#p do
 				local p2=p[i]
-				local x2,y2=63.5+flr(shl(p2[1]/p2[3],6)),63.5-flr(shl(p2[2]/p2[3],6))
-				trifill(x0,y0,x1,y1,x2,y2,c)
-				x1,y1=x2,y2
+				local w2=63.5/p2[3]
+				local x22,y22=63.5+flr(p2[1]*w2),63.5-flr(p2[2]*w2)
+				--trifill(x0,y0,x1,y1,x2,y2,c)
+				-- backup values
+				local x2,y2=x22,y22
+
+				if(y1<y0)x0,x1,y0,y1=x1,x0,y1,y0
+				if(y2<y0)x0,x2,y0,y2=x2,x0,y2,y0
+				if(y2<y1)x1,x2,y1,y2=x2,x1,y2,y1
+				if max(x2,max(x1,x0))-min(x2,min(x1,x0)) > y2-y0 then
+					col=x0+(x2-x0)/(y2-y0)*(y1-y0)
+					p01_trapeze_h(x0,x0,x1,col,y0,y1)
+					p01_trapeze_h(x1,col,x2,x2,y1,y2)
+				else
+					if(x1<x0)x0,x1,y0,y1=x1,x0,y1,y0
+					if(x2<x0)x0,x2,y0,y2=x2,x0,y2,y0
+					if(x2<x1)x1,x2,y1,y2=x2,x1,y2,y1
+					col=y0+(y2-y0)/(x2-x0)*(x1-x0)
+					p01_trapeze_w(y0,y0,y1,col,x0,x1)
+					p01_trapeze_w(y1,col,y2,y2,x1,x2)
+				end
+				x0=x01
+				y0=y01
+				x1=x22
+				y1=y22
 			end
 		end,
 		visible_tiles=function(self,fn)
@@ -1219,9 +1243,9 @@ function draw_faces(faces,v_cache)
 				local m=v_cache.m
 				for _,skids in pairs(d.f.skidmarks) do
 					local verts,outcode,is_clipped={},0xffff,0
-					for i=1,4 do
+					for ki=1,4 do
 						-- world to cam
-						local a=m_x_v(m,skids[i])
+						local a=m_x_v(m,skids[ki])
 						local ax,az=a[1],a[3]
 						local aout=az>z_near and k_far or k_near
 						if ax>az then aout+=k_right
@@ -1230,7 +1254,7 @@ function draw_faces(faces,v_cache)
 						-- behind near plane?
 						is_clipped+=band(aout,2)
 						outcode=band(outcode,aout)
-						verts[i]={ax,a[2],az}
+						verts[ki]=a
 					end
 					if outcode==0 then
 						-- mix of near+far vertices?
