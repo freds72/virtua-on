@@ -5,55 +5,129 @@ __lua__
 local raz
 local mode=0
 
-local razz
+local v_1={
+{24.94,12.39},
+{17.27,16.13},
+{17.27,16.13},
+{16.51,16.13},
+{16.51,-10.45},
+{16.29,-13.75},
+{15.37,-14.75},
+{12.54,-15.14},
+{12.54,-16.00},
+{24.38,-16.00},
+{24.38,-15.14},
+{21.50,-14.76},
+{21.50,-14.76},
+{20.59,-13.85},
+{20.34,-10.45},
+{20.34,6.54},
+{20.57,10.95},
+{21.16,12.04},
+{22.20,12.39},
+{24.59,11.67},
+{24.94,12.39}
+}
+local v_k={
+{-7.47,1.46},
+{-19.08,-10.08},
+{-23.95,-13.97},
+{-27.99,-15.14},
+{-27.99,-16.00},
+{-13.02,-16.00},
+{-13.02,-15.14},
+{-14.96,-14.69},
+{-15.55,-13.68},
+{-15.33,-12.68},
+{-13.88,-11.03},
+{-3.01,-0.28},
+{-3.01,-10.43},
+{-3.32,-13.59},
+{-4.29,-14.58},
+{-6.40,-15.14},
+{-7.47,-15.14},
+{-7.47,-16.00},
+{5.95,-16.00},
+{5.95,-15.14},
+{4.83,-15.14},
+{2.00,-14.00},
+{1.44,-10.43},
+{1.44,9.91},
+{1.74,13.09},
+{2.70,14.06},
+{4.83,14.62},
+{5.95,14.62},
+{5.95,15.48},
+{-7.47,15.48},
+{-7.47,14.62},
+{-6.40,14.62},
+{-4.29,14.08},
+{-3.29,12.97},
+{-3.01,9.91},
+{-3.01,0.27},
+{-6.19,3.22},
+{-14.53,11.65},
+{-15.15,13.27},
+{-14.67,14.21},
+{-13.02,14.62},
+{-12.30,14.62},
+{-12.30,15.48},
+{-23.86,15.48},
+{-23.86,14.62},
+{-22.00,14.34},
+{-19.96,13.35},
+{-16.99,11.00},
+{-12.28,6.24},
+{-7.47,1.46}
+}
+
 
 function _init()
- razz={
-		--edge_rasterizer,
-		--poly_rasterizer,
-		trifill_rasterizer,
-		--hybrid_rasterizer,
-		convex_rasterizer
-	}
  --raz=edge_rasterizer()
  --raz=poly_rasterizer()
  --raz=trifill_rasterizer()
- raz=razz[1]()
+ raz=hybrid_rasterizer()
 end
 
 local angle=0
-function _update() 
-	
-	if btnp(4) then
-	 mode=(mode+1)%#razz
-	 raz=razz[mode+1]()
-	end
-	 
-	angle+=0.001
+function _update()
+	angle+=1/(30*8)
 	local cc,ss=cos(angle),-sin(angle)
-	local scale=1
-	local function rotate(x,y)
-		x-=64
-		y-=40
-		return 64+scale*(x*ss-y*cc),64+scale*(x*cc+y*ss)
+	local scale=1.5--abs(2+0.2*cos(time()))
+
+	cc,ss=cos(angle),-sin(angle)
+	for _,poly in pairs({v_1,v_k}) do
+		local v={}
+		for i,p in pairs(poly) do
+		 local x,y=p[1],p[2]
+		 v[i]={64+scale*(x*ss-y*cc),64+scale*(x*cc+y*ss)}
+		end
+		raz:add(v,1,1)
 	end
-	for i=1,8 do
-		cc,ss=cos(angle+0.23*i),-sin(angle+0.23*i)
-		local x0,y0=rotate(24,24)
-		local x1,y1=rotate(96,24)
-		local x2,y2=rotate(96,112)
-		local x3,y3=rotate(24,112)
-		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},1+i%13,i)
+end
+
+function printc(s,x,y)
+ local dy=(8*time())%12
+ for i=0,5 do
+  clip(0,y+i,127,1)
+  print(s,x,y-dy,8+i)
  end
- 
+ clip()
 end
 
 function _draw()
  cls()
- raz:draw()
+ raz:draw(0)
  local cpu=flr(1000*stat(1))/10
- rectfill(0,0,127,6,8)
- print(raz.name..": "..cpu.."%",2,1,7)
+ --rectfill(0,0,127,6,8)
+ 
+ local s="♥ thank you  ★\n★pico-8 rocks♥\n♥ thank you  ★"
+ printc(s,64-36,12)
+
+ s="aa edge rasterizer\n   by @freds72   \naa edge rasterizer"
+ printc(s,64-38,110)
+
+ --print(cpu.."%",2,1,7)
 end
 
 -->8
@@ -396,106 +470,82 @@ end
 function hybrid_rasterizer()
 	local poly={}
 
+ -- anti-aliasing ramp
+ local aa={7,6,13,1}
+ 
 	return {
 	name="hybrid",
 	-- add edge
 	add=function(self,verts,c,z)
 		local v0=verts[#verts]
-		local ymin,ymax=v0[2],v0[2]
 		for i=1,#verts do
 			local v1=verts[i]
-			local y=v1[2]
-			ymin=min(ymin,y)
-			ymax=max(ymax,y)
 			-- edge building
 			-- target
-		 v0[3]=y
+		 v0[3]=v1[2]
 		 -- dx
-		 v0[4]=(v1[1]-v0[1])/(y-v0[2])
+		 v0[4]=(v1[1]-v0[1])/(v1[2]-v0[2])
 			--end
 			v0=v1
 		end
-		add(poly,{v=verts,c=c,ymin=ymin,ymax=ymax})
+		add(poly,{v=verts,c=c})
 	end,
- draw=function(self)
-	 for k=1,#poly do
-		local p=poly[k]
-		local v=p.v
-  	color(p.c)
-   -- todo:
-   -- mix with edge
-   -- use xmin/x to draw rectfills
-   for y=p.ymin,p.ymax do
-	   local xmin
- 	  for v0 in all(v) do
- 	  	local y0,y1=v0[2],v0[3]
- 	   if (y0>y and y1<=y) or (y1>y and y0<=y) then
- 	    local x=v0[1]+(y-y0)*v0[4]
- 	    if xmin then
- 	     rectfill(xmin,y,x,y)
- 	    else
- 	    	xmin=x
- 	    end
- 	   end
- 	  end
- 	 end
+ draw=function(self,mode)
+  -- avoid garbage collect
+  local aet={}
+  for y=0,127 do
+   local n=0
+		 for k=1,#poly do
+			 local v=poly[k].v
+	   for i=1,#v do
+		   local v0=v[i]
+		   local y0,y1=v0[2],v0[3]    
+		   if (y0>y and y1<=y) or (y1>y and y0<=y) then
+		    n+=1
+		    aet[n]=v0[1]+(y-y0)*v0[4]
+	    end
+		  end
+		 end
+		 -- sort
+	  for i=1,n do
+			 while i>1 and aet[i-1]>aet[i] do
+				 aet[i],aet[i-1]=aet[i-1],aet[i]
+				 i-=1
+			 end
+		 end
+			 
+			-- render strips
+			if mode==0 then
+	   for i=1,n,2 do
+	    local x0,x1=aet[i],aet[i+1]
+	    rectfill(x0,y,x1,y,7)
+	    -- cheap aa
+	    pset(x0,y,aa[flr(3*(x0%1))+1])
+	    pset(x1,y,aa[flr(3*(1-x1%1))+1])
+	   end
+   else
+	   for i=1,n do
+	    pset(aet[i],y,7)
+	   end
+   end
+   --[[
+   local xmin=0			
+   for i=1,n,2 do
+    rectfill(xmin,y,aet[i],y,7)
+    xmin=aet[i+1]
+   end
+   rectfill(xmin,y,127,y,7)
+	  ]]
   end
   poly={}
  end
  }
 end
 
--->8
--- hybrid rasterizer
-function convex_rasterizer()
-	local poly={}
-
-	return {
-	name="convex",
-	-- add edge
-	add=function(self,verts,c,z)
-		add(poly,{v=verts,c=c})
-	end,
- draw=function(self)
-	for k=1,#poly do
-		local p=poly[k]
-		local v=p.v
-  		color(p.c)
-
-		local v0,nodes=v[#v],{}
-		local x0,y0=v0[1],flr(v0[2])
-		for i=1,#v do
-			local v1=v[i]
-			local x1,y1=v1[1],flr(v1[2])
-			local _x1,_y1=x1,y1
-			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-			local dx=(x1-x0)/(y1-y0)
-			if(y0<0) x0-=y0*dx y0=0
-			for y=y0,min(y1,128) do
-				-- todo: try w/ poke2...
-				local x=nodes[y]
-				nodes[y]=x and rectfill(x,y,x0,y) or x0
-				--[[
-				if x then
-					rectfill(x,y,x0,y)
-				else
-					nodes[y]=x0
-				end
-				]]
-				x0+=dx
-			end
-			x0,y0=_x1,_y1
-		end
-  	end
-  	poly={}
-end
-}
-end
-
 __gfx__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0000000000000000001d670000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00007700077000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000

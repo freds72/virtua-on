@@ -257,7 +257,7 @@ local actors={}
 local sessionid=0
 local k_far,k_near=0,2
 local k_right,k_left=4,8
-local z_near=0.05
+local z_near=1
 
 -- fonts
 local xlfont={
@@ -277,7 +277,7 @@ local goal_music=3
 -- voxel helpers
 function to_tile_coords(v)
 	local x,y=shr(v[1],3)+16,shr(v[3],3)+16
-	return flr(x),flr(y),x,y
+	return band(0xffff,x),band(0xffff,y),x,y
 end
 
 -- camera
@@ -290,11 +290,13 @@ function make_cam()
 	local view_mode=0
 	-- view offset/angle/lag
 	local view_pov={
-		{-1.65,1.125,0.2},
-		{-0.7,0.3,0.1},
-		{-0.01,0.1,0.6}
+		{z=-1.65,y=1.125,lag=0.2},
+		{z=-0.7,y=0.3,lag=0.1},
+		{z=-0.01,y=0.1,lag=0.6}
 	}
-	local current_pov=v_clone(view_pov[view_mode+1])
+
+	local current_pov=view_pov[view_mode+1]
+	local pov_z,pov_y,pov_lag=current_pov.z,current_pov.y,current_pov.lag
 
 	--
 	local up={0,1,0}
@@ -321,15 +323,18 @@ function make_cam()
 				switching_async=corun(switching_async)
 			elseif btnp(4) then
 				local next_mode=(view_mode+1)%#view_pov
-				local next_pov=v_clone(view_pov[next_mode+1])
+				local next_pov=view_pov[next_mode+1]
+				local next_pov_z,next_pov_y,next_pov_lag=next_pov.z,next_pov.y,next_pov.lag
 				switching_async=cocreate(function()
-					for i=0,29 do
+					for i=0,30 do
 						local t=smoothstep(i/30)
-						current_pov=v_lerp(view_pov[view_mode+1],next_pov,t)
+						pov_z=lerp(pov_z,next_pov_z,t)
+						pov_y=lerp(pov_y,next_pov_y,t)
+						pov_lag=lerp(pov_lag,next_pov_lag,t)
 						yield()
 					end
 					-- avoid drift
-					current_pov,view_mode=next_pov,next_mode
+					view_mode=next_mode
 				end)
 			end
 
@@ -343,15 +348,15 @@ function make_cam()
 		track=function(self,pos,a,u)
    			pos=v_clone(pos)
    			-- lerp angle
-			self.angle=lerp(self.angle,a,current_pov[3])
+			self.angle=lerp(self.angle,a,pov_lag)
 			-- lerp orientation
-			up=v_lerp(up,u,current_pov[3])
+			up=v_lerp(up,u,pov_lag)
 			v_normz(up)
 
 			-- shift cam position			
 			local m=make_m_from_v_angle(up,self.angle)
-			v_add(pos,m_fwd(m),current_pov[1])
-			v_add(pos,m_up(m),current_pov[2])
+			v_add(pos,m_fwd(m),pov_z)
+			v_add(pos,m_up(m),pov_y)
 			
 			-- inverse view matrix
 			-- only invert orientation part
@@ -370,46 +375,38 @@ function make_cam()
 		end,
 		project_poly=function(self,p,col)
 			color(col)
-			local p0,p1=p[1],p[2]
-			-- magic constants = 89.4% vs. 90.9%
-			-- shl = 79.7% vs. 80.6%
-			local w0,w1=63.5/p0[3],63.5/p1[3]
-			local x0,y0,x1,y1=63.5+flr(p0[1]*w0),63.5-flr(p0[2]*w0),63.5+flr(p1[1]*w1),63.5-flr(p1[2]*w1)
-			local x01,y01=x0,y0
-			for i=3,#p do
-				local p2=p[i]
-				local w2=63.5/p2[3]
-				local x22,y22=63.5+flr(p2[1]*w2),63.5-flr(p2[2]*w2)
-				--trifill(x0,y0,x1,y1,x2,y2,c)
-				-- backup values
-				local x2,y2=x22,y22
+			local p0,nodes=p[#p],{}
+			local w0=63.5/p0[3]
+			-- band vs. flr: -0.20%
+			local x0,y0=63.5+band(0xffff,p0[1]*w0),63.5-band(0xffff,p0[2]*w0)
 
-				if(y1<y0)x0,x1,y0,y1=x1,x0,y1,y0
-				if(y2<y0)x0,x2,y0,y2=x2,x0,y2,y0
-				if(y2<y1)x1,x2,y1,y2=x2,x1,y2,y1
-				if max(x2,max(x1,x0))-min(x2,min(x1,x0)) > y2-y0 then
-					col=x0+(x2-x0)/(y2-y0)*(y1-y0)
-					p01_trapeze_h(x0,x0,x1,col,y0,y1)
-					p01_trapeze_h(x1,col,x2,x2,y1,y2)
-				else
-					if(x1<x0)x0,x1,y0,y1=x1,x0,y1,y0
-					if(x2<x0)x0,x2,y0,y2=x2,x0,y2,y0
-					if(x2<x1)x1,x2,y1,y2=x2,x1,y2,y1
-					col=y0+(y2-y0)/(x2-x0)*(x1-x0)
-					p01_trapeze_w(y0,y0,y1,col,x0,x1)
-					p01_trapeze_w(y1,col,y2,y2,x1,x2)
+			for i=1,#p do
+				local p1=p[i]
+				local w1=63.5/p1[3]
+				local x01,y01=63.5+band(0xffff,p1[1]*w1),63.5-band(0xffff,p1[2]*w1)
+				-- backup before any swap
+				local x1,y1=x01,y01
+				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+				local dx=(x1-x0)/(y1-y0)
+				if(y0<0) x0-=y0*dx y0=0
+				for y=y0,min(y1,128) do
+					local x=nodes[y]
+					-- any 'other' side?
+					if x then
+						rectfill(x,y,x0,y)
+					else
+						-- first pixel on this row
+						nodes[y]=x0
+					end
+					x0+=dx
 				end
-				x0=x01
-				y0=y01
-				x1=x22
-				y1=y22
+				-- next vertex
+				x0,y0=x01,y01
 			end
 		end,
-		visible_tiles=function(self,fn)
+		visible_tiles=function(self)
 			local x0,y0,x,y=to_tile_coords(self.pos)
-			local k=x0+shl(y0,5)
-			fn(k,0)
-			local tiles,angle={[k]=0},self.angle 
+			local tiles,angle={[x0+shl(y0,5)]=0},self.angle 
    
    			for i,a in pairs(angles) do
 				local v,u=cos(a+angle),-sin(a+angle)
@@ -438,10 +435,8 @@ function make_cam()
 						mapy+=mapdy
 					end
 					-- non solid visible tiles
-					k=mapx+shl(mapy,5)
-					if band(bor(mapx,mapy),0xffe0)==0 and not tiles[k] then
-						fn(k,dist)
-						tiles[k]=dist
+					if band(bor(mapx,mapy),0xffe0)==0 then
+						tiles[mapx+shl(mapy,5)]=dist
 					end
 				end				
 			end	
@@ -1138,9 +1133,9 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
-			local z,y,outcode,verts,is_clipped=0,0,0xffff,{},0
+			local z,y,outcode,verts,is_clipped,ni=0,0,0xffff,{},0,face.ni
 			-- project vertices
-			for ki=1,face.ni do
+			for ki=1,ni do
 				local a=v_cache[face[ki]]
 				y+=a[2]
 				z+=a[3]
@@ -1152,13 +1147,16 @@ function collect_faces(faces,cam_pos,v_cache,out,dist)
 			-- mix of near/far verts?
 			if outcode==0 then
 	   			-- average before changing verts
-				y/=face.ni
-				z/=face.ni
+				y/=ni
+				z/=ni
 
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
-					out[n]={key=1/(y*y+z*z),f=face,v=verts,dist=dist}
+					verts.key=1/(y*y+z*z)
+					verts.f=face
+					verts.dist=dist
+					out[n]=verts
 				 	-- 0.1% faster vs [#out+1]
 				 	n+=1
 				end
@@ -1218,7 +1216,7 @@ end
 function draw_faces(faces,v_cache)
 	for i=1,#faces do
 		local d=faces[i]
-		cam:project_poly(d.v,d.f.c)
+		cam:project_poly(d,d.f.c)
 		-- details?
 		if d.key>0.0200 then
 			-- face details
@@ -1281,16 +1279,21 @@ function _draw()
 	local v_cache=setmetatable({m=cam.m,v=track.v},v_cache_cls)
 
 	local out={}
-	local tiles=cam:visible_tiles(function(k,dist)
+	local t0=stat(1)
+	local tiles=cam:visible_tiles()
+
+	t0=stat(1)
+	for k,dist in pairs(tiles) do
 		local faces=track.voxels[k]
 		if faces then
 			collect_faces(faces,cam.pos,v_cache,out,dist)
 		end 
-	end)
+	end
 
 	sort(out)
+
 	draw_faces(out,v_cache)
- 
+
 	-- clear vertex cache
 	out={}
 	for _,actor in pairs(actors) do
@@ -1307,15 +1310,13 @@ function _draw()
 	end
 
 	sort(out)
+
 	draw_faces(out)
-	
+
 	-- hud and game state display
 	draw_state()
 
-	local cpu=stat(1)
-	local mem=ceil(stat(0))
-	cpu=cpu.."%\n"..mem.."kb\n"--.."\n"..cam.pos[1].."/"..cam.pos[3]
-	printb(cpu,2,2,7,2)
+	print(stat(1),2,2,0)
 end
 
 -->8
@@ -1540,55 +1541,27 @@ function unpack_track(name)
 	return model	
 end
 
-
 -->8
 -- trifill & clipping
 -- by @p01
 function p01_trapeze_h(l,r,lt,rt,y0,y1)
-  lt,rt=(lt-l)/(y1-y0),(rt-r)/(y1-y0)
-  if(y0<0)l,r,y0=l-y0*lt,r-y0*rt,0
-  for y0=y0,min(y1,128) do
-   rectfill(l,y0,r,y0)
-   l+=lt
-   r+=rt
+	lt,rt=(lt-l)/(y1-y0),(rt-r)/(y1-y0)
+	if(y0<0)l,r,y0=l-y0*lt,r-y0*rt,0
+	for y0=y0,min(y1,128) do
+	 rectfill(l,y0,r,y0)
+	 l+=lt
+	 r+=rt
+	end
   end
-end
-function p01_trapeze_w(t,b,tt,bt,x0,x1)
- tt,bt=(tt-t)/(x1-x0),(bt-b)/(x1-x0)
- if(x0<0)t,b,x0=t-x0*tt,b-x0*bt,0
- for x0=x0,min(x1,128) do
-  rectfill(x0,t,x0,b)
-  t+=tt
-  b+=bt
- end
-end
-
-function trifill(x0,y0,x1,y1,x2,y2,col)
- color(col)
- if(y1<y0)x0,x1,y0,y1=x1,x0,y1,y0
- if(y2<y0)x0,x2,y0,y2=x2,x0,y2,y0
- if(y2<y1)x1,x2,y1,y2=x2,x1,y2,y1
- if max(x2,max(x1,x0))-min(x2,min(x1,x0)) > y2-y0 then
-  col=x0+(x2-x0)/(y2-y0)*(y1-y0)
-  p01_trapeze_h(x0,x0,x1,col,y0,y1)
-  p01_trapeze_h(x1,col,x2,x2,y1,y2)
- else
-  if(x1<x0)x0,x1,y0,y1=x1,x0,y1,y0
-  if(x2<x0)x0,x2,y0,y2=x2,x0,y2,y0
-  if(x2<x1)x1,x2,y1,y2=x2,x1,y2,y1
-  col=y0+(y2-y0)/(x2-x0)*(x1-x0)
-  p01_trapeze_w(y0,y0,y1,col,x0,x1)
-  p01_trapeze_w(y1,col,y2,y2,x1,x2)
- end
-end
-
---[[
-function trifill(x0,y0,x1,y1,x2,y2,col)
-	line(x0,y0,x1,y1,col)
-	line(x2,y2)
-	line(x0,y0)
-end
-]]
+  function p01_trapeze_w(t,b,tt,bt,x0,x1)
+   tt,bt=(tt-t)/(x1-x0),(bt-b)/(x1-x0)
+   if(x0<0)t,b,x0=t-x0*tt,b-x0*bt,0
+   for x0=x0,min(x1,128) do
+	rectfill(x0,t,x0,b)
+	t+=tt
+	b+=bt
+   end
+  end
 
 function z_poly_clip(znear,v)
 	local res={}
