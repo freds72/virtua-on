@@ -449,7 +449,7 @@ end
 -- hybrid rasterizer
 function convex_rasterizer()
 	local poly={}
-
+	
 	return {
 	name="convex",
 	-- add edge
@@ -463,25 +463,22 @@ function convex_rasterizer()
   		color(p.c)
 
 		local v0,nodes=v[#v],{}
-		local x0,y0=v0[1],flr(v0[2])
+		local x0,y0=v0[1],band(0xffff,v0[2])
 		for i=1,#v do
 			local v1=v[i]
-			local x1,y1=v1[1],flr(v1[2])
+			local x1,y1=v1[1],band(0xffff,v1[2])
 			local _x1,_y1=x1,y1
 			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
 			local dx=(x1-x0)/(y1-y0)
 			if(y0<0) x0-=y0*dx y0=0
 			for y=y0,min(y1,128) do
-				-- todo: try w/ poke2...
 				local x=nodes[y]
-				nodes[y]=x and rectfill(x,y,x0,y) or x0
-				--[[
+				--nodes[y]=x and rectfill(x,y,x0,y) or x0
 				if x then
 					rectfill(x,y,x0,y)
 				else
 					nodes[y]=x0
 				end
-				]]
 				x0+=dx
 			end
 			x0,y0=_x1,_y1

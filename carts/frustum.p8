@@ -111,9 +111,9 @@ function m_x_v(m,v)
 end
 -- optimized 4x4 matrix mulitply
 function m_x_m(a,b)
-	local a11,a12,a13,a14=a[1],a[5],a[9],a[13]
-	local a21,a22,a23,a24=a[2],a[6],a[10],a[14]
-	local a31,a32,a33,a34=a[3],a[7],a[11],a[15]
+	local a11,a12,a13=a[1],a[5],a[9]
+	local a21,a22,a23=a[2],a[6],a[10]
+	local a31,a32,a33=a[3],a[7],a[11]
 
 	local b11,b12,b13,b14=b[1],b[5],b[9],b[13]
 	local b21,b22,b23,b24=b[2],b[6],b[10],b[14]
@@ -123,15 +123,16 @@ function m_x_m(a,b)
 			a11*b11+a12*b21+a13*b31,a21*b11+a22*b21+a23*b31,a31*b11+a32*b21+a33*b31,0,
 			a11*b12+a12*b22+a13*b32,a21*b12+a22*b22+a23*b32,a31*b12+a32*b22+a33*b32,0,
 			a11*b13+a12*b23+a13*b33,a21*b13+a22*b23+a23*b33,a31*b13+a32*b23+a33*b33,0,
-			a11*b14+a12*b24+a13*b34+a14,a21*b14+a22*b24+a23*b34+a24,a31*b14+a32*b24+a33*b34+a34,1
+			a11*b14+a12*b24+a13*b34+a[13],a21*b14+a22*b24+a23*b34+a[14],a31*b14+a32*b24+a33*b34+a[15],1
 		}
 end
 function m_clone(m)
-	local c={}
-	for k,v in pairs(m) do
-		c[k]=v
-	end
-	return c
+	return {
+		m[1],m[2],m[3],0,
+		m[5],m[6],m[7],0,
+		m[9],m[10],m[11],0,
+		m[13],m[14],m[15],1
+	}
 end
 function make_m_from_euler(x,y,z)
 		local a,b = cos(x),-sin(x)
@@ -1168,6 +1169,7 @@ end
 
 function collect_model_faces(model,m,parts,out)
 	-- all models reuses the same faces!!
+	-- artificially bump the session
 	sessionid+=1
 	
 	-- cam pos in object space
@@ -1181,7 +1183,7 @@ function collect_model_faces(model,m,parts,out)
 	for i=1,#model.lod_dist do
 		if(d>model.lod_dist[i]) lodid+=1
 	end
-	
+	-- cap to max lod if too far away
 	model=model.lods[min(lodid,#model.lods-1)+1]
 
 	-- object to world
@@ -1207,6 +1209,7 @@ function collect_model_faces(model,m,parts,out)
 
 		-- full vertex group vertex to cam transformation
 		m_set_pos(m_base,m_x_v(m_orig,vgroup.offset))
+		-- use the same vertex cache
 		p.m=m_x_m(m_base,vgm)
 
 	 	collect_faces(vgroup.f,vg_cam_pos,p,out)
@@ -1269,7 +1272,7 @@ function _draw()
 	sessionid+=1
 
 	-- background
-	local x0=-(cam.angle*128)%128
+	local x0=-shl(cam.angle,7)%128
  	map(track.map,0,x0,0,16,16)
  	if x0>0 then
 	 	map(track.map,0,x0-128,0,16,16)
@@ -1279,10 +1282,8 @@ function _draw()
 	local v_cache=setmetatable({m=cam.m,v=track.v},v_cache_cls)
 
 	local out={}
-	local t0=stat(1)
 	local tiles=cam:visible_tiles()
 
-	t0=stat(1)
 	for k,dist in pairs(tiles) do
 		local faces=track.voxels[k]
 		if faces then
@@ -1296,6 +1297,8 @@ function _draw()
 
 	-- clear vertex cache
 	out={}
+	--local _cpu={}
+	--local t0=stat(1)
 	for _,actor in pairs(actors) do
 		local pos,angle=actor:get_pos()
 		-- is model visible?
@@ -1308,15 +1311,25 @@ function _draw()
 			collect_model_faces(actor.model,m,actor,out)
 		end
 	end
+	--_cpu["collect"]=stat(1)-t0
 
 	sort(out)
 
+	--t0=stat(1)
 	draw_faces(out)
+	--_cpu["draw"]=stat(1)-t0
 
 	-- hud and game state display
 	draw_state()
+	--[[
 
-	print(stat(1),2,2,0)
+	local y=2
+	for k,v in pairs(_cpu) do
+		print(k..":"..v,2,y,0)
+		y+=7
+	end
+	]]
+	print(stat(1).."\n"..stat(0).."b",2,2,0)
 end
 
 -->8

@@ -339,7 +339,10 @@ function make_cam()
 			-- shift cam position			
 			local m=make_m_lookat(from,to)
 			-- v_add(pos,m_fwd(m),current_pov[1])
-			
+
+			local right=m_right(m)
+			self.angle=atan2(m[1],m[3])
+
 			-- inverse view matrix
 			m_inv(m)
 			self.m=m_x_m(m,{
@@ -351,17 +354,35 @@ function make_cam()
 			
 			self.pos=pos
 		end,
-		project_poly=function(self,p,c)
-			local p0,p1=p[1],p[2]
-			-- magic constants = 89.4% vs. 90.9%
-			-- shl = 79.7% vs. 80.6%
-			local x0,y0=63.5+flr(shl(p0[1]/p0[3],6)),63.5-flr(shl(p0[2]/p0[3],6))
-			local x1,y1=63.5+flr(shl(p1[1]/p1[3],6)),63.5-flr(shl(p1[2]/p1[3],6))
-			for i=3,#p do
-				local p2=p[i]
-				local x2,y2=63.5+flr(shl(p2[1]/p2[3],6)),63.5-flr(shl(p2[2]/p2[3],6))
-				trifill(x0,y0,x1,y1,x2,y2,c)
-				x1,y1=x2,y2
+		project_poly=function(self,p,col)
+			color(col)
+			local p0,nodes=p[#p],{}
+			local w0=63.5/p0[3]
+			-- band vs. flr: -0.20%
+			local x0,y0=63.5+band(0xffff,p0[1]*w0),63.5-band(0xffff,p0[2]*w0)
+
+			for i=1,#p do
+				local p1=p[i]
+				local w1=63.5/p1[3]
+				local x01,y01=63.5+band(0xffff,p1[1]*w1),63.5-band(0xffff,p1[2]*w1)
+				-- backup before any swap
+				local x1,y1=x01,y01
+				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+				local dx=(x1-x0)/(y1-y0)
+				if(y0<0) x0-=y0*dx y0=0
+				for y=y0,min(y1,128) do
+					local x=nodes[y]
+					-- any 'other' side?
+					if x then
+						rectfill(x,y,x0,y)
+					else
+						-- first pixel on this row
+						nodes[y]=x0
+					end
+					x0+=dx
+				end
+				-- next vertex
+				x0,y0=x01,y01
 			end
 		end
 	}
@@ -388,7 +409,11 @@ function title_state()
 	return {
 		-- draw
 		draw=function()
-			map(0,0,0,0)
+			local x0=-(cam.angle*128)%128
+			map(0,0,x0,0,16,16)
+			if x0>0 then
+				map(0,0,x0-128,0,16,16)
+			end
 			
 			local out={}
 			-- track
@@ -534,7 +559,7 @@ function selection_state()
 	local blink=true
 	local track_spr={
 		{0,0,level="beginner",c=7,file="bigforest"},
-		--{0,56,level="medium",c=7,file="acropolis"}
+		{0,56,level="medium",c=7,file="acropolis"},
 		{54,0,level="expert",c=10,file="ocean"}
 	}
  	local width=54+12
@@ -808,54 +833,6 @@ function unpack_models()
 		all_models[name]=model
 	end)
 end
-
--->8
--- trifill & clipping
--- by @p01
-function p01_trapeze_h(l,r,lt,rt,y0,y1)
-  lt,rt=(lt-l)/(y1-y0),(rt-r)/(y1-y0)
-  if(y0<0)l,r,y0=l-y0*lt,r-y0*rt,0
-  for y0=y0,min(y1,128) do
-   rectfill(l,y0,r,y0)
-   l+=lt
-   r+=rt
-  end
-end
-function p01_trapeze_w(t,b,tt,bt,x0,x1)
- tt,bt=(tt-t)/(x1-x0),(bt-b)/(x1-x0)
- if(x0<0)t,b,x0=t-x0*tt,b-x0*bt,0
- for x0=x0,min(x1,128) do
-  rectfill(x0,t,x0,b)
-  t+=tt
-  b+=bt
- end
-end
-
-function trifill(x0,y0,x1,y1,x2,y2,col)
- color(col)
- if(y1<y0)x0,x1,y0,y1=x1,x0,y1,y0
- if(y2<y0)x0,x2,y0,y2=x2,x0,y2,y0
- if(y2<y1)x1,x2,y1,y2=x2,x1,y2,y1
- if max(x2,max(x1,x0))-min(x2,min(x1,x0)) > y2-y0 then
-  col=x0+(x2-x0)/(y2-y0)*(y1-y0)
-  p01_trapeze_h(x0,x0,x1,col,y0,y1)
-  p01_trapeze_h(x1,col,x2,x2,y1,y2)
- else
-  if(x1<x0)x0,x1,y0,y1=x1,x0,y1,y0
-  if(x2<x0)x0,x2,y0,y2=x2,x0,y2,y0
-  if(x2<x1)x1,x2,y1,y2=x2,x1,y2,y1
-  col=y0+(y2-y0)/(x2-x0)*(x1-x0)
-  p01_trapeze_w(y0,y0,y1,col,x0,x1)
-  p01_trapeze_w(y1,col,y2,y2,x1,x2)
- end
-end
---[[
-function trifill(x0,y0,x1,y1,x2,y2,col)
-	line(x0,y0,x1,y1,col)
-	line(x2,y2)
-	line(x0,y0)
-end
-]]
 
 -->8
 -- 3d
