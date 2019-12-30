@@ -98,7 +98,7 @@ def export_models():
     s = ""
 
     # 3d models
-    file_list = ['car_genesis']
+    file_list = ['car_genesis','car_ai_genesis']
     s = s + "{:02x}".format(len(file_list))
     for blend_file in file_list:
         print("Exporting: {}.blend".format(blend_file))
@@ -115,6 +115,31 @@ def export_models():
             os.remove(path)
 
     return s
+
+def compress(uncompressed):
+    """Compress a string to a list of output symbols."""
+ 
+    # Build the dictionary.
+    dict_size = 256
+    dictionary = {chr(i): i for i in range(dict_size)}
+ 
+    w = ""
+    result = []
+    for c in uncompressed:
+        wc = w + c
+        if wc in dictionary:
+            w = wc
+        else:
+            result.append(dictionary[w])
+            # Add wc to the dictionary.
+            dictionary[wc] = dict_size
+            dict_size += 1
+            w = c
+ 
+    # Output the code for w.
+    if w:
+        result.append(dictionary[w])
+    return result
 
 
 model_data = export_models()
@@ -143,7 +168,6 @@ for blend_file,cart_name in files.items():
     # append model data to track
     s += model_data
     
-
     # multi-cart export
     start = 0
     cart_id = 0

@@ -278,6 +278,7 @@ local goal_music=3
 -- voxel helpers
 function to_tile_coords(v)
 	local x,y=shr(v[1],3)+16,shr(v[3],3)+16
+	-- slightly faster than flr
 	return band(0xffff,x),band(0xffff,y),x,y
 end
 
@@ -291,14 +292,14 @@ function make_cam()
 	local view_mode=0
 	-- view offset/angle/lag
 	local view_pov={
-		{z=-1.65,y=1.125,lag=0.2},
-		{z=-0.7,y=0.3,lag=0.1},
-		{z=-0.01,y=0.1,lag=0.6}
+		{z=-1.65,y=1.125,lag=0.2,znear=1},
+		{z=-0.7,y=0.3,lag=0.1,znear=0.25},
+		{z=-0.01,y=0.1,lag=0.6,znear=0.05}
 	}
 
 	local current_pov=view_pov[view_mode+1]
 	local pov_z,pov_y,pov_lag=current_pov.z,current_pov.y,current_pov.lag
-
+	z_near=current_pov.znear
 	--
 	local up={0,1,0}
 
@@ -322,19 +323,20 @@ function make_cam()
 		update=function(self)
 			if switching_async then
 				switching_async=corun(switching_async)
-			elseif btnp(4) then
+			elseif btn(4) then
 				local next_mode=(view_mode+1)%#view_pov
 				local next_pov=view_pov[next_mode+1]
-				local next_pov_z,next_pov_y,next_pov_lag=next_pov.z,next_pov.y,next_pov.lag
+				local next_pov_z,next_pov_y,next_pov_lag,next_znear=next_pov.z,next_pov.y,next_pov.lag,next_pov.znear
 				switching_async=cocreate(function()
 					for i=0,30 do
-						local t=smoothstep(i/30)
+						local t=0.22
 						pov_z=lerp(pov_z,next_pov_z,t)
 						pov_y=lerp(pov_y,next_pov_y,t)
 						pov_lag=lerp(pov_lag,next_pov_lag,t)
+						z_near=lerp(z_near,next_znear,t)
 						yield()
 					end
-					-- avoid drift
+					-- commit change
 					view_mode=next_mode
 				end)
 			end
@@ -384,9 +386,9 @@ function make_cam()
 			for i=1,#p do
 				local p1=p[i]
 				local w1=63.5/p1[3]
-				local x01,y01=63.5+band(0xffff,p1[1]*w1),63.5-band(0xffff,p1[2]*w1)
+				local x1,y1=63.5+band(0xffff,p1[1]*w1),63.5-band(0xffff,p1[2]*w1)
 				-- backup before any swap
-				local x1,y1=x01,y01
+				local _x1,_y1=x1,y1
 				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
 				local dx=(x1-x0)/(y1-y0)
 				if(y0<0) x0-=y0*dx y0=0
@@ -402,7 +404,7 @@ function make_cam()
 					x0+=dx
 				end
 				-- next vertex
-				x0,y0=x01,y01
+				x0,y0=_x1,_y1
 			end
 		end,
 		visible_tiles=function(self)
@@ -529,7 +531,8 @@ function make_car(model,p,angle)
 	}
 
 	local do_skidmarks=function(self,emitters)
-		if(self!=plyr) return
+		-- no 3d model?
+		if(not model) return
 		for k,emitter in pairs(emitters) do
 			-- world position
 			local vgroup_offset=model.vgroups[k].offset
@@ -748,7 +751,7 @@ function make_track(segments)
 end
 
 function make_npc(p,angle,track)	
-	local body=make_car(all_models["car"].lods[2],p,angle)
+	local body=make_car(nil,p,angle)
 
 	-- return world position p in local space (2d)
 	function inv_apply(self,target)
@@ -758,7 +761,7 @@ function make_npc(p,angle,track)
 	end
 
 	-- todo: switch to npc car model
-	body.model=all_models["car"]
+	body.model=all_models["car_ai"]
 
 	body.control=function(self)
 		-- lookahead
@@ -1124,7 +1127,8 @@ local v_cache_cls={
 		-- slower (0.2%)
 		-- -shl(shr(az-z_near,31),17)-shl(shr(az-ax,31),18)-shl(shr(az+ax,31),19)}
 
-		t[k]={ax,m[2]*x+m[6]*y+m[10]*z+m[14],az,outcode=outcode} 
+		local ay=m[2]*x+m[6]*y+m[10]*z+m[14]
+		t[k]={ax,ay,az,outcode=outcode} 
 		return t[k]
 	end
 }

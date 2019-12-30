@@ -7,4 +7,5 @@ config.txt
 *.blend1
 sdl_controllers.txt
 *.bin
+/carts/*_[0-9].p8
 

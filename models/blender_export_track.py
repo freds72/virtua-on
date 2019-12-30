@@ -378,7 +378,6 @@ def export_spline(spline):
     mat = obcontext.matrix_world
     for v in spline_points:
         loc = mat * v
-        print("{:.4f},{:.4f}".format(loc.x,loc.y))
         s += "{}{}".format(pack_double(loc.x), pack_double(loc.y))
     return s
 
@@ -390,7 +389,6 @@ def export_checkpoints():
         if checkpoint_name in scene.objects:
             checkpoint = scene.objects[checkpoint_name]
             # 2d position + radius
-            print("{:.4f},{:.4f},{:.4f}".format(checkpoint.location.x,checkpoint.location.y,checkpoint.empty_draw_size))
             checkpoints.append("{}{}{}".format(pack_double(checkpoint.location.x), pack_double(checkpoint.location.y),pack_double(checkpoint.empty_draw_size)))
     s = pack_variant(len(checkpoints))
     for data in checkpoints:
