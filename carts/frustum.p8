@@ -936,7 +936,7 @@ function play_state()
 
 	local function track_project(v,pos,cc,ss)
 		local x,y=v[1]-pos[1],v[3]-pos[3]
-		return 96+0.3*(cc*x-ss*y),64-0.3*(ss*x+cc*y)
+		return 108+0.3*(cc*x-ss*y),64-0.3*(ss*x+cc*y)
 	end
 		
 	return
@@ -979,7 +979,7 @@ function play_state()
 				x0,y0=track_project(npc:get_pos(),pos,cc,ss)
 				circfill(x0,y0,1.5,0x4)
 			end
-			circfill(96,64,1,0x8)
+			circfill(108,64,1,0x8)
 		end,
 		-- update
 		function()
@@ -1073,7 +1073,7 @@ function _init()
 	if track_name=="" then
 		-- starting without context
 		cls(1)
-		track_name="bigforest"
+		track_name="ocean"
 	end
 	track=unpack_track(track_name)
 	-- load regular 3d models
@@ -1334,6 +1334,8 @@ function _draw()
 	end
 	]]
 	print(stat(1).."\n"..stat(0).."b",2,2,0)
+	pal(14,128,1)
+	pal(15,131,1)
 end
 
 -->8
