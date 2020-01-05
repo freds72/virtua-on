@@ -81,7 +81,7 @@ def diffuse_to_p8color(rgb):
 
 genesis_to_p8_colors = {
     "0": 0, # black
-    "1": 4, # dark brown
+    "1": 14, # dark brown - alias for 128 (dark tan)
     "2": 7, # white
     "3": 8, # red
     "4": 12, # dark blue
@@ -92,11 +92,12 @@ genesis_to_p8_colors = {
     "9": 13, # dark bluish grey
     "a": 3, # dark green
     "b": 11, # light green
-    "c": 3, # dark green
+    "c": 15, # dark green - alias for 131 (dark bluish green)
     "d": 4, # light yellow
     "e": 9, # dark yellow
     "f": 4, # brown
 }
+# free colors: 2 14 -15-
 
 # https://noonat.github.io/intersect/#aabb-vs-aabb
 def voxel_bbox2d_intersects(i,j,w,b):
