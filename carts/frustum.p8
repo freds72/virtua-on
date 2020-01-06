@@ -416,18 +416,18 @@ function make_cam()
 			local p0,nodes=p[#p],{}
 			local w0=63.5/p0[3]
 			-- band vs. flr: -0.20%
-			local x0,y0=63.5+band(0xffff,p0[1]*w0),63.5-band(0xffff,p0[2]*w0)
+			local x0,y0=band(0xffff,p0[1]*w0),-band(0xffff,p0[2]*w0)
 
 			for i=1,#p do
 				local p1=p[i]
 				local w1=63.5/p1[3]
-				local x1,y1=63.5+band(0xffff,p1[1]*w1),63.5-band(0xffff,p1[2]*w1)
+				local x1,y1=band(0xffff,p1[1]*w1),-band(0xffff,p1[2]*w1)
 				-- backup before any swap
 				local _x1,_y1=x1,y1
 				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
 				local dx=(x1-x0)/(y1-y0)
-				if(y0<0) x0-=y0*dx y0=0
-				for y=y0,min(y1,128) do
+				if(y0<-64) x0-=(y0+64)*dx y0=-64
+				for y=y0,min(y1,63) do
 					local x=nodes[y]
 					-- any 'other' side?
 					if x then
@@ -686,7 +686,9 @@ function make_car(model,p,angle)
 				max_rpm=0.4
 			end
 			-- above 0
+			-- should never happen actually
 			pos[2]=max(pos[2])
+
 			-- collision
 			if oldf and oldf.borders then
 				local hit,force,hit_n=face_collide(oldf,pos,0.25)
@@ -1108,7 +1110,7 @@ function _init()
 	if track_name=="" then
 		-- starting without context
 		cls(1)
-		track_name="ocean"
+		track_name="bigforest"
 	end
 	track=unpack_track(track_name)
 	-- load regular 3d models
@@ -1161,46 +1163,46 @@ local v_cache_cls={
 		
 		-- slower (0.2%)
 		-- -shl(shr(az-z_near,31),17)-shl(shr(az-ax,31),18)-shl(shr(az+ax,31),19)}
-
-		t[k]={ax,m[2]*x+m[6]*y+m[10]*z+m[14],az,outcode=outcode} 
-		return t[k]
+		local a={ax,m[2]*x+m[6]*y+m[10]*z+m[14],az,outcode=outcode,clipcode=band(outcode,2)} 
+		t[k]=a
+		return a
 	end
 }
 
-function collect_faces(faces,cam_pos,v_cache,out,out_nosort)
+function collect_faces(faces,cam_pos,v_cache,out)
 	local n,sessionid=#out,sessionid
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
-			local z,y,outcode,verts,is_clipped,ni=0,0,0xffff,{},0,face.ni
 			-- project vertices
-			for ki=1,ni do
-				local a=v_cache[face[ki]]
-				y+=a[2]
-				z+=a[3]
-				outcode=band(outcode,a.outcode)
-				-- behind near plane?
-				is_clipped+=band(a.outcode,2)
-				verts[ki]=a
+			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]]
+			local outcode,is_clipped=band(v0.outcode,band(v1.outcode,v2.outcode)),v0.clipcode+v1.clipcode+v2.clipcode
+			-- average before changing verts
+			local y,z=v0[2]+v1[2]+v2[2],v0[3]+v1[3]+v2[3]
+			-- quad?
+			if face.ni==4 then
+				v3=v_cache[face[4]]
+				outcode=band(outcode,v3.outcode)
+				is_clipped+=v3.clipcode
+				y+=v3[2]
+				z+=v3[3]
 			end
+			
 			-- mix of near/far verts?
 			if outcode==0 then
-	   			-- average before changing verts
-				y/=ni
-				z/=ni
+				y/=face.ni
+				z/=face.ni
+
+				local verts={v0,v1,v2,v3}
 
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
 					verts.f=face
 					verts.key=1/(y*y+z*z)
-					if band(face.flags,16)>0 then
-						out_nosort[#out_nosort+1]=verts
-					else
-						-- 0.1% faster vs [#out+1]
-						n+=1
-						out[n]=verts
-					end
+					-- 0.1% faster vs [#out+1]
+					n+=1
+					out[n]=verts
 				end
 			end
 			face.session=sessionid	
@@ -1260,30 +1262,33 @@ end
 function draw_faces(faces,v_cache)
 	for i=1,#faces do
 		local d=faces[i]
-		cam:project_poly(d,d.f.c)
+		local main_face=d.f
+		cam:project_poly(d,main_face.c)
 		-- details?
 		if d.key>0.0200 then
 			-- face details
-			if d.f.inner then -- d.dist<2 then					
-				for _,face in pairs(d.f.inner) do
-					local verts,outcode,is_clipped={},0xffff,0
-					for ki=1,face.ni do
-						local a=v_cache[face[ki]]
-						outcode=band(outcode,a.outcode)
-						-- behind near plane?
-						is_clipped+=band(a.outcode,2)
-						verts[ki]=a
+			if main_face.inner then -- d.dist<2 then
+				-- reuse array
+				for _,face in pairs(main_face.inner) do
+					local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]]
+					local outcode,is_clipped=band(v0.outcode,band(v1.outcode,v2.outcode)),v0.clipcode+v1.clipcode+v2.clipcode
+					-- quad?
+					if face.ni==4 then
+						v3=v_cache[face[4]]
+						outcode=band(outcode,v3.outcode)
+						is_clipped+=v3.clipcode
 					end
 					if outcode==0 then
+						local verts={v0,v1,v2,v3}
 						if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 						if(#verts>2) cam:project_poly(verts,face.c)
 					end
 				end
 			end
 			-- face skidmarks
-			if d.f.skidmarks then
+			if main_face.skidmarks then
 				local m=v_cache.m
-				for _,skids in pairs(d.f.skidmarks) do
+				for _,skids in pairs(main_face.skidmarks) do
 					local verts,outcode,is_clipped={},0xffff,0
 					for ki=1,4 do
 						-- world to cam
@@ -1325,23 +1330,21 @@ function _draw()
 	-- track
 	local v_cache=setmetatable({m=cam.m,v=track.v},v_cache_cls)
 
-	local out,out_nosort={},{}
-	local tiles=cam:visible_tiles()
+	local out,tiles={},cam:visible_tiles()
 	
 	for k,dist in pairs(tiles) do
 		local faces=track.voxels[k]
 		if faces then
-			collect_faces(faces,cam.pos,v_cache,out,out_nosort)
+			collect_faces(faces,cam.pos,v_cache,out)
 		end 
 	end
 
 	sort(out)
 
-	draw_faces(out_nosort,v_cache)
+	camera(-64,-64)
 	draw_faces(out,v_cache)
 
 	-- clear vertex cache
-	
 	out={}
 	
 	for _,actor in pairs(actors) do
@@ -1356,12 +1359,12 @@ function _draw()
 			collect_model_faces(actor.model,m,actor,out)
 		end
 	end
-
+	
 	sort(out)
 	
-	--t0=stat(1)
 	draw_faces(out)
-	--_cpu["draw"]=stat(1)-t0
+
+	camera()
 
 	-- hud and game state display
 	draw_state()
@@ -1603,34 +1606,13 @@ function unpack_track(name)
 end
 
 -->8
--- trifill & clipping
--- by @p01
-function p01_trapeze_h(l,r,lt,rt,y0,y1)
-	lt,rt=(lt-l)/(y1-y0),(rt-r)/(y1-y0)
-	if(y0<0)l,r,y0=l-y0*lt,r-y0*rt,0
-	for y0=y0,min(y1,128) do
-	 rectfill(l,y0,r,y0)
-	 l+=lt
-	 r+=rt
-	end
-  end
-  function p01_trapeze_w(t,b,tt,bt,x0,x1)
-   tt,bt=(tt-t)/(x1-x0),(bt-b)/(x1-x0)
-   if(x0<0)t,b,x0=t-x0*tt,b-x0*bt,0
-   for x0=x0,min(x1,128) do
-	rectfill(x0,t,x0,b)
-	t+=tt
-	b+=bt
-   end
-  end
-
+-- clipping
 function z_poly_clip(znear,v)
-	local res={}
-	local v0,v1,d1,t,r=v[#v]
-	local d0=-znear+v0[3]
+	local res,v0={},v[#v]
+	local d0=v0[3]-znear
 	for i=1,#v do
-		v1=v[i]
-		d1=-znear+v1[3]
+		local v1=v[i]
+		local d1=v1[3]-znear
 		if d1>0 then
 			if(d0<=0) res[#res+1]=v_lerp(v0,v1,d0/(d0-d1))
 			res[#res+1]=v1
@@ -1749,9 +1731,9 @@ c6c6c6c6777777777777777777770000e08880eeee0880eee0880eeeee0880eee080eeeee0880eee
 66666666777777777777777777777770eee0088888800eeeeee008888800eee088880eee08888800888888888880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 77777777777777777777777777777777eeeee000000eeeeeeeeee00000eeeeee0000eeeee00000ee00000000000eee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 111111111111111133333333cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeedddddddd33333333cccccccc
-c1c1c1c15555555533333333cccccc33eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee4949494933333333cccccc43
-111111115353535333333333ccccc333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea4a4a4a433333333cccc4434
-111111113535353533333333cccc3333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbbbbbbb33333333ccc44443
+c1c1c1c1ffffffff33333333cccccc33eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee4949494933333333cccccc43
+11111111f3f3f3f333333333ccccc333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea4a4a4a433333333cccc4434
+111111113f3f3f3f33333333cccc3333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbbbbbbb33333333ccc44443
 111c111c3333333333333333cc333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333cc434434
 111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebcbcbcbc33333333cc444343
 111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333c4343433
