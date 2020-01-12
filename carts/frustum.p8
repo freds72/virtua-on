@@ -198,9 +198,9 @@ function sort(_data)
 	local _len,buffer1,buffer2,idx=#_data,_data,{},{}
 
 	-- radix shift
-	for shift=0,5,5 do
+	for shift=0,8,8 do
 		-- faster than for each/zeroing count array
-		memset(0x4300,0,32)
+		memset(0x4300,0,256)
 
 		for i,b in pairs(buffer1) do
 			local c=0x4300+band(shr(b.key,shift),31)
@@ -210,7 +210,7 @@ function sort(_data)
 				
 		-- shifting array
 		local c0=peek(0x4300)
-		for mem=0x4301,0x431f do
+		for mem=0x4301,0x43ff do
 			local c1=peek(mem)+c0
 			poke(mem,c1)
 			c0=c1
@@ -218,11 +218,11 @@ function sort(_data)
 
 		for i=_len,1,-1 do
 			local c=peek(idx[i])
-			buffer2[c] = buffer1[i]
+			buffer2[c]=buffer1[i]
 			poke(idx[i],c-1)
 		end
 
-		buffer1, buffer2 = buffer2, buffer1
+		buffer1,buffer2=buffer2,buffer1
 	end
 end
 
@@ -466,7 +466,7 @@ function make_cam()
 					disty=(mapy+1-y)*ddy
 				end
 
-				for dist=0,max_dist do
+				for dist=0,1 do
 					if distx<disty then
 						distx+=ddx
 						mapx+=mapdx
@@ -1187,7 +1187,7 @@ function collect_faces(faces,cam_pos,v_cache,out)
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
 			-- project vertices
-			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]
+			local ni,v0,v1,v2,v3=9,v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]
 			local outcode,is_clipped,y,z=band(v0.outcode,band(v1.outcode,v2.outcode)),v0.clipcode+v1.clipcode+v2.clipcode,v0[2]+v1[2]+v2[2],v0[3]+v1[3]+v2[3]
 			-- quad?
 			if v3 then
@@ -1195,6 +1195,7 @@ function collect_faces(faces,cam_pos,v_cache,out)
 				is_clipped+=v3.clipcode
 				y+=v3[2]
 				z+=v3[3]
+				ni=16
 			end
 			
 			-- mix of near/far verts?
@@ -1205,9 +1206,7 @@ function collect_faces(faces,cam_pos,v_cache,out)
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
 					verts.f=face
-					y/=face.ni
-					z/=face.ni
-					verts.key=1/(y*y+z*z)
+					verts.key=ni/(y*y+z*z)
 					-- 0.1% faster vs [#out+1]
 					n+=1
 					out[n]=verts
@@ -1278,11 +1277,10 @@ function draw_faces(faces,v_cache)
 			if main_face.inner then -- d.dist<2 then
 				-- reuse array
 				for _,face in pairs(main_face.inner) do
-					local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]]
+					local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]
 					local outcode,is_clipped=band(v0.outcode,band(v1.outcode,v2.outcode)),v0.clipcode+v1.clipcode+v2.clipcode
 					-- quad?
-					if face.ni==4 then
-						v3=v_cache[face[4]]
+					if v3 then
 						outcode=band(outcode,v3.outcode)
 						is_clipped+=v3.clipcode
 					end
