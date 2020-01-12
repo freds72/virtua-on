@@ -111,13 +111,8 @@ function m_x_v(m,v)
 end
 -- optimized 4x4 matrix mulitply
 function m_x_m(a,b)
-	local a11,a12,a13=a[1],a[5],a[9]
-	local a21,a22,a23=a[2],a[6],a[10]
-	local a31,a32,a33=a[3],a[7],a[11]
-
-	local b11,b12,b13,b14=b[1],b[5],b[9],b[13]
-	local b21,b22,b23,b24=b[2],b[6],b[10],b[14]
-	local b31,b32,b33,b34=b[3],b[7],b[11],b[15]
+	local a11,a12,a13,a21,a22,a23,a31,a32,a33=a[1],a[5],a[9],a[2],a[6],a[10],a[3],a[7],a[11]
+	local b11,b12,b13,b14,b21,b22,b23,b24,b31,b32,b33,b34=b[1],b[5],b[9],b[13],b[2],b[6],b[10],b[14],b[3],b[7],b[11],b[15]
 
 	return {
 			a11*b11+a12*b21+a13*b31,a21*b11+a22*b21+a23*b31,a31*b11+a32*b21+a33*b31,0,
@@ -415,14 +410,12 @@ function make_cam()
 		project_poly=function(self,p,col)
 			color(col)
 			local p0,nodes=p[#p],{}
-			local w0=63.5/p0[3]
 			-- band vs. flr: -0.20%
-			local x0,y0=band(0xffff,p0[1]*w0),-band(0xffff,p0[2]*w0)
+			local x0,y0=p0.x,p0.y
 
 			for i=1,#p do
 				local p1=p[i]
-				local w1=63.5/p1[3]
-				local x1,y1=band(0xffff,p1[1]*w1),-band(0xffff,p1[2]*w1)
+				local x1,y1=p1.x,p1.y
 				-- backup before any swap
 				local _x1,_y1=x1,y1
 				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
@@ -1166,50 +1159,44 @@ local v_cache_cls={
 		-- inline: local a=m_x_v(t.m,t.v[k]) 
 		local v,m=t.v[k],t.m
 		local x,y,z=v[1],v[2],v[3]
-		local ax,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[3]*x+m[7]*y+m[11]*z+m[15]
+		local ax,ay,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]
 	
 		local outcode=k_near
 		if(az>z_near) outcode=k_far
 		if(ax>az) outcode+=k_right
 		if(-ax>az) outcode+=k_left
 		
-		-- slower (0.2%)
-		-- -shl(shr(az-z_near,31),17)-shl(shr(az-ax,31),18)-shl(shr(az+ax,31),19)}
-		local a={ax,m[2]*x+m[6]*y+m[10]*z+m[14],az,outcode=outcode,clipcode=band(outcode,2)} 
+		-- assume vertex is visible, compute 2d coords
+		local a={ax,ay,az,outcode=outcode,clipcode=band(outcode,2),x=band(0xffff,shl(ax/az,6)),y=-band(0xffff,shl(ay/az,6))} 
 		t[k]=a
 		return a
 	end
 }
 
 function collect_faces(faces,cam_pos,v_cache,out)
-	local n,sessionid=#out,sessionid
+	local sessionid=sessionid
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
 			-- project vertices
-			local ni,v0,v1,v2,v3=9,v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]
-			local outcode,is_clipped,y,z=band(v0.outcode,band(v1.outcode,v2.outcode)),v0.clipcode+v1.clipcode+v2.clipcode,v0[2]+v1[2]+v2[2],v0[3]+v1[3]+v2[3]
-			-- quad?
-			if v3 then
-				outcode=band(outcode,v3.outcode)
-				is_clipped+=v3.clipcode
-				y+=v3[2]
-				z+=v3[3]
-				ni=16
-			end
-			
+			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]			
 			-- mix of near/far verts?
-			if outcode==0 then
+			if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
 				local verts={v0,v1,v2,v3}
 
+				local ni,is_clipped,y,z=9,v0.clipcode+v1.clipcode+v2.clipcode,v0[2]+v1[2]+v2[2],v0[3]+v1[3]+v2[3]
+				if v3 then
+					is_clipped+=v3.clipcode
+					y+=v3[2]
+					z+=v3[3]
+					ni=16
+				end
 				-- mix of near+far vertices?
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
 					verts.f=face
 					verts.key=ni/(y*y+z*z)
-					-- 0.1% faster vs [#out+1]
-					n+=1
-					out[n]=verts
+					out[#out+1]=verts
 				end
 			end
 			face.session=sessionid	
@@ -1266,6 +1253,15 @@ function collect_model_faces(model,m,parts,out)
 	end
 end
 
+-- draw quad (or tri)
+function draw_quad(v0,v1,v2,v3,col)
+	if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
+		local verts={v0,v1,v2,v3}
+		if(v0.clipcode+v1.clipcode+v2.clipcode+(v3 and v3.clipcode or 0)>0) verts=z_poly_clip(z_near,verts)
+		if(#verts>2) cam:project_poly(verts,col)
+	end
+end
+
 function draw_faces(faces,v_cache)
 	for i=1,#faces do
 		local d=faces[i]
@@ -1277,43 +1273,15 @@ function draw_faces(faces,v_cache)
 			if main_face.inner then -- d.dist<2 then
 				-- reuse array
 				for _,face in pairs(main_face.inner) do
-					local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]
-					local outcode,is_clipped=band(v0.outcode,band(v1.outcode,v2.outcode)),v0.clipcode+v1.clipcode+v2.clipcode
-					-- quad?
-					if v3 then
-						outcode=band(outcode,v3.outcode)
-						is_clipped+=v3.clipcode
-					end
-					if outcode==0 then
-						local verts={v0,v1,v2,v3}
-						if(is_clipped>0) verts=z_poly_clip(z_near,verts)
-						if(#verts>2) cam:project_poly(verts,face.c)
-					end
+					draw_quad(v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]],face.c)
 				end
 			end
 			-- face skidmarks
 			if main_face.skidmarks then
 				local m=v_cache.m
 				for _,skids in pairs(main_face.skidmarks) do
-					local verts,outcode,is_clipped={},0xffff,0
-					for ki=1,4 do
-						-- world to cam
-						local a=m_x_v(m,skids[ki])
-						local ax,az=a[1],a[3]
-						local aout=az>z_near and k_far or k_near
-						if ax>az then aout+=k_right
-						elseif -ax>az then aout+=k_left
-						end
-						-- behind near plane?
-						is_clipped+=band(aout,2)
-						outcode=band(outcode,aout)
-						verts[ki]=a
-					end
-					if outcode==0 then
-						-- mix of near+far vertices?
-						if(is_clipped>0) verts=z_poly_clip(z_near,verts)
-						if(#verts>2) cam:project_poly(verts,0)
-					end
+					local s_cache=setmetatable({m=v_cache.m,v=skids},v_cache_cls)
+					draw_quad(s_cache[1],s_cache[2],s_cache[3],s_cache[4],0)
 				end
 			end
 		end
@@ -1348,8 +1316,8 @@ function _draw()
 	sort(out)
 
 	draw_faces(out,v_cache)
-
-	-- clear vertex cache
+	
+	-- clear vertex 
 	out={}
 	
 	for _,actor in pairs(actors) do
@@ -1621,10 +1589,18 @@ function z_poly_clip(znear,v)
 		local v1=v[i]
 		local d1=v1[3]-znear
 		if d1>0 then
-			if(d0<=0) res[#res+1]=v_lerp(v0,v1,d0/(d0-d1))
+			if d0<=0 then
+				local nv=v_lerp(v0,v1,d0/(d0-d1)) 
+				nv.x=band(0xffff,shl(nv[1]/nv[3],6)) 
+				nv.y=-band(0xffff,shl(nv[2]/nv[3],6)) 
+				res[#res+1]=nv
+			end
 			res[#res+1]=v1
 		elseif d0>0 then
-			res[#res+1]=v_lerp(v0,v1,d0/(d0-d1))
+			local nv=v_lerp(v0,v1,d0/(d0-d1)) 
+			nv.x=band(0xffff,shl(nv[1]/nv[3],6)) 
+			nv.y=-band(0xffff,shl(nv[2]/nv[3],6)) 
+			res[#res+1]=nv
 		end
 		v0,d0=v1,d1
 	end
@@ -1809,13 +1785,6 @@ __map__
 1111111111111111111111020102011110101010101010101010101010101010002f2e2e33000023330000232e2e2e330000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 21212121212121212121212121212121323232323232323232323232323232323f2d2d2d2d3f3f2d2d3f3f2d2d2d2d2d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000020202020202020202020202020202020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000031313131313131313131313131313131000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000031313131313131313131313131313131000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000031313131313131313131313131313131000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000031313131313131313131313131313131000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000031313131313131313131313131313131000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000031313131313131313131313131313131000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000031313131313131313131313131313131000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
 00010002201501b750131500415004150000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00010002281301d720211301c250231501c2501b2500d1501f2500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
