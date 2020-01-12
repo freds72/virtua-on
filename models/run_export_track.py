@@ -71,15 +71,15 @@ cstore()
     cart += "__gfx__\n"
     cart += re.sub("(.{128})", "\\1\n", gfx_data, 0, re.DOTALL)
 
-    gfx_props=s[2*0x3000:2*0x3100]
-    if len(gfx_props)>0:
-        cart += "__gff__\n"
-        cart += re.sub("(.{256})", "\\1\n", gfx_props, 0, re.DOTALL)
-
     map_data=s[2*0x2000:2*0x3000]
     if len(map_data)>0:
         cart += "__map__\n"
         cart += re.sub("(.{256})", "\\1\n", map_data, 0, re.DOTALL)
+
+    gfx_props=s[2*0x3000:2*0x3100]
+    if len(gfx_props)>0:
+        cart += "__gff__\n"
+        cart += re.sub("(.{256})", "\\1\n", gfx_props, 0, re.DOTALL)
 
     # save track cart + export cryptic music+sfx part
     sfx_data=s[2*0x3100:2*0x4300]
@@ -116,39 +116,23 @@ def export_models():
 
     return s
 
-def compress(uncompressed):
-    """Compress a string to a list of output symbols."""
- 
-    # Build the dictionary.
-    dict_size = 256
-    dictionary = {chr(i): i for i in range(dict_size)}
- 
-    w = ""
-    result = []
-    for c in uncompressed:
-        wc = w + c
-        if wc in dictionary:
-            w = wc
-        else:
-            result.append(dictionary[w])
-            # Add wc to the dictionary.
-            dictionary[wc] = dict_size
-            dict_size += 1
-            w = c
- 
-    # Output the code for w.
-    if w:
-        result.append(dictionary[w])
-    return result
+# -------------------------------
+# main
+cart_data = []
+cart_data.append({'data':export_models()})
 
-
-model_data = export_models()
+# format:
+# track id: 1 byte
+# offset: 2 bytes
+track_offsets = {'data':"000000000000000000"}
+cart_data.append(track_offsets)
 
 files = {
     'big_forest_genesis':'bigforest',
     'acropolis_genesis':'acropolis',
     'ocean_genesis':'ocean'
 }
+
 for blend_file,cart_name in files.items():
     print("Exporting: {}.blend".format(blend_file))
     # data buffer
@@ -164,17 +148,52 @@ for blend_file,cart_name in files.items():
             s = s + outfile.read()
     finally:
         os.remove(path)
+    cart_data.append({'name':cart_name,'data':s})
 
-    # append model data to track
-    s += model_data
+#
+# models -> cart: 0 / offset: 0
+# bigforest -> cart: 0 / offset: 9634
+# acropolis -> cart: 4 / offset: 7272
+# ocean -> cart: 8 / offset: 8486
+
+# multi-cart export to cart set
+cart_id = 0
+cart_offset = 0
+# use yield
+def create_data_iterator(record_offsets):
+    actual_offsets = ""
+    for data_block in cart_data:
+        if record_offsets and 'name' in data_block:
+            print("{} -> cart: {} / offset: {}".format(data_block['name'], cart_id, cart_offset/2))
+            actual_offsets += "{:02x}{:04x}".format(cart_id,int(cart_offset/2))
+        for b in data_block['data']:
+            yield b
+    if record_offsets:
+        track_offsets['data']=actual_offsets
     
-    # multi-cart export
-    start = 0
-    cart_id = 0
-    cart_data = s[:2*0x4300]
-    while len(cart_data)>0:
-        to_cart(cart_data, cart_name, cart_id)
-        # next cart
+# dry run to get offsets
+i = 0
+it = create_data_iterator(True)
+for b in it:
+    i += 1
+    cart_offset+=1
+    # full cart?
+    if i==2*0x4300:
         cart_id += 1
-        start += 2*0x4300
-        cart_data = s[start:start+2*0x4300]
+        cart_offset = 0
+        i = 0
+
+# actual export
+cart_id = 0
+s = ""
+it = create_data_iterator(False)
+for b in it:
+    s += b
+    # full cart?
+    if len(s)==2*0x4300:
+        to_cart(s,"tracks",cart_id)
+        cart_id += 1
+        s = ""
+# remaining data?
+if len(s)!=0:
+    to_cart(s,"tracks",cart_id)
