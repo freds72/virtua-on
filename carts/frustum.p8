@@ -1339,7 +1339,7 @@ function _draw()
 
 	-- hud and game state display
 	draw_state()
-
+	
 	local y=-64
 
 	print(stat(1).."\n"..stat(0).."b",-62,y+2,0)
@@ -1695,6 +1695,43 @@ function print3d(sx,sy,sw,sh,y,angle)
  	end
 	palt()
 end
+
+--[[
+local odraw,oupdate,omake_plyr=_draw,_update,make_plyr
+local _cpu,_ttl,_bench=0,2*30,10*30
+function make_plyr(_,angle)
+	-- fix position
+	local p=omake_plyr({-23.7,1.25,-9.80},angle)
+	local rpm=0
+	p.control=function(self)	
+		rpm=rpm+0.1
+		rpm=self:steer(0,rpm)
+	end
+	return p
+end
+
+function _update()
+	_bench-=1
+	if(_bench<0) extcmd("video") stop()
+	oupdate()
+end
+function _draw()
+	camera(-64,-64)
+	odraw()
+	local cpu=stat(1)
+	camera()
+
+	rectfill(0,121,127,127,0x11)
+	_cpu=max(_cpu,cpu)
+	-- refresh max every 5s
+	_ttl-=1
+	if(_ttl<0) _cpu=cpu _ttl=2*30
+	
+	local s=tostr(flr(1000*_cpu)/10)
+	s="2020: "..s..sub("00.00",#s+1,5).."%"
+	print(s,66,122,7)
+end
+]]
 
 __gfx__
 00000000cccccccccccccccccccccccceeeee00000ee0eeeeeeee00000eeeeeeeeeeeee0eeeeeeee000000eeeeeeee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
