@@ -558,9 +558,9 @@ function selection_state()
  	local track_tgt=0
 	local blink=true
 	local track_spr={
-		{0,0,level="beginner",c=7,file="bigforest"},
-		{0,56,level="medium",c=7,file="acropolis"},
-		{54,0,level="expert",c=10,file="ocean"}
+		{0,0,level="beginner",c=7,id=0},
+		{0,56,level="medium",c=7,id=1},
+		{54,0,level="expert",c=10,id=2}
 	}
  	local width=54+12
 	local start_race_async
@@ -624,7 +624,7 @@ function selection_state()
 						blink=i%2==0 and true
 						yield()
 					end
-					push_state(slidein_state,load_state,track_spr[track+1].file)
+					push_state(slidein_state,load_state,track_spr[track+1].id)
 				end)
 			end
 		end
@@ -632,14 +632,14 @@ function selection_state()
 end
 
 -- load track
-function load_state(name)
-	assert(name)
+function load_state(id)
+	assert(id)
 	return {
 		draw=function()
 		end,
 		update=function()
 			-- load track
-			load("frustum.p8",nil,name)
+			load("frustum.p8",nil,id)
 		end
 	}
 end
