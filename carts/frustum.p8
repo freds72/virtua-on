@@ -939,7 +939,7 @@ function start_state()
 		-- draw
 		function()
 			local sx=flr(ttl/30)*12
-			printxl(sx,32,12,16,50)
+			printxl(sx,32,12,16,-14)
 
 			-- todo: allow acceleration during "go"
 			-- todo: boost if acceleration is at frame 15
@@ -990,7 +990,7 @@ function play_state()
 			printr("km/h",-32,57,10,9)
 
 			-- blink go!
-			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,50)
+			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,-14)
 
 			-- extend time message
 			if(extend_time_t>0 and extend_time_t%30<15) printr("extend time",nil,-36,10,4)
@@ -1083,9 +1083,9 @@ function gameover_state(win,total_t)
 		function()
 			-- rotating game over/goal
 			if win then 
-				print3d(32,0,65,16,50,angle)
+				print3d(32,0,65,16,-14,angle)
 			else
-				print3d(39,32,57,32,50,angle)
+				print3d(39,32,57,32,-14,angle)
 			end
 
 			-- total time
@@ -1694,7 +1694,7 @@ function printxl(sx,sy,sw,sh,dy)
 	palt(14,true)
 	palt(0,false)
 
- sspr(sx,sy,sw,sh,64-sw/2,dy)
+ sspr(sx,sy,sw,sh,-sw/2,dy)
  palt()	
 end
 
@@ -1713,7 +1713,7 @@ function print3d(sx,sy,sw,sh,y,angle)
 	palt(0,false)
  	local u,du,dw=0,sh*w1/len,(w1-w0)/len
  	for y=y+y0,y+y1-0.5 do
- 		sspr(sx,sy+u/w0,sw,1,63.5-w0,y,2*w0,1)
+ 		sspr(sx,sy+u/w0,sw,1,-w0,y,2*w0,1)
   		u+=du
   		w0+=dw
  	end
