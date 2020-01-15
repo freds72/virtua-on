@@ -198,7 +198,7 @@ function sort(_data)
 		memset(0x4300,0,256)
 
 		for i,b in pairs(buffer1) do
-			local c=0x4300+band(shr(b.key,shift),31)
+			local c=bor(0x4300,band(shr(b.key,shift),255))
 			poke(c,peek(c)+1)
 			idx[i]=c
 		end
@@ -275,8 +275,6 @@ function sort(data)
 	 data[parent] = value
 	end
    end
-
-
 -->8
 -- main engine
 -- global vars
@@ -1003,22 +1001,29 @@ function play_state()
 			
 			-- track map
 			local pos,angle=plyr:get_pos()
-			local cc,ss,track_map=cos(angle),-sin(angle),track.npc_path
+			local cc,ss,track_outline=cos(angle),-sin(angle),track.npc_path
 			-- draw npc path
-			local x0,y0=track_project(track_map[#track_map],pos,cc,ss)
+			local x0,y0=track_project(track_outline[#track_outline],pos,cc,ss)
 			color(0)
-			for i=1,#track_map,2 do
-				local x1,y1=track_project(track_map[i],pos,cc,ss)
+			for i=1,#track_outline,2 do
+				local x1,y1=track_project(track_outline[i],pos,cc,ss)
 				line(x0,y0,x1,y1)
 				x0,y0=x1,y1
 			end
 			-- draw other cars
 			for _,npc in pairs(npcs) do
+<<<<<<< HEAD
+				x0,y0=track_project(npc:get_pos(),pos,cc,ss)
+				circfill(x0,y0,1.5,0x44)
+			end
+			circfill(108,64,1,0x88)
+=======
 				local x0,y0=track_project(npc:get_pos(),pos,cc,ss)
 				circfill(x0,y0,1.5,0x4)
 			end
 			-- player
 			circfill(44,0,1,0x8)
+>>>>>>> effe81cc81b571b51c06365533335fe5f99923e9
 		end,
 		-- update
 		function()
