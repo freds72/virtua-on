@@ -111,8 +111,13 @@ function m_x_v(m,v)
 end
 -- optimized 4x4 matrix mulitply
 function m_x_m(a,b)
-	local a11,a12,a13,a21,a22,a23,a31,a32,a33=a[1],a[5],a[9],a[2],a[6],a[10],a[3],a[7],a[11]
-	local b11,b12,b13,b14,b21,b22,b23,b24,b31,b32,b33,b34=b[1],b[5],b[9],b[13],b[2],b[6],b[10],b[14],b[3],b[7],b[11],b[15]
+	local a11,a12,a13=a[1],a[5],a[9]
+	local a21,a22,a23=a[2],a[6],a[10]
+	local a31,a32,a33=a[3],a[7],a[11]
+
+	local b11,b12,b13,b14=b[1],b[5],b[9],b[13]
+	local b21,b22,b23,b24=b[2],b[6],b[10],b[14]
+	local b31,b32,b33,b34=b[3],b[7],b[11],b[15]
 
 	return {
 			a11*b11+a12*b21+a13*b31,a21*b11+a22*b21+a23*b31,a31*b11+a32*b21+a33*b31,0,
@@ -193,19 +198,19 @@ function sort(_data)
 	local _len,buffer1,buffer2,idx=#_data,_data,{},{}
 
 	-- radix shift
-	for shift=0,8,8 do
+	for shift=0,5,5 do
 		-- faster than for each/zeroing count array
-		memset(0x4300,0,256)
+		memset(0x4300,0,32)
 
 		for i,b in pairs(buffer1) do
-			local c=bor(0x4300,band(shr(b.key,shift),255))
+			local c=0x4300+band(shr(b.key,shift),31)
 			poke(c,peek(c)+1)
 			idx[i]=c
 		end
 				
 		-- shifting array
 		local c0=peek(0x4300)
-		for mem=0x4301,0x43ff do
+		for mem=0x4301,0x431f do
 			local c1=peek(mem)+c0
 			poke(mem,c1)
 			c0=c1
@@ -213,11 +218,11 @@ function sort(_data)
 
 		for i=_len,1,-1 do
 			local c=peek(idx[i])
-			buffer2[c]=buffer1[i]
+			buffer2[c] = buffer1[i]
 			poke(idx[i],c-1)
 		end
 
-		buffer1,buffer2=buffer2,buffer1
+		buffer1, buffer2 = buffer2, buffer1
 	end
 end
 
@@ -275,6 +280,7 @@ function sort(data)
 	 data[parent] = value
 	end
    end
+
 -->8
 -- main engine
 -- global vars
@@ -320,13 +326,13 @@ function make_cam()
 	local view_mode=0
 	-- view offset/angle/lag
 	local view_pov={
-		{z=-1.65,y=1.125,lag=0.2,znear=1,dist=2.1},
-		{z=-0.7,y=0.3,lag=0.1,znear=0.25,dist=1},
-		{z=-0.01,y=0.1,lag=0.6,znear=0.05,dist=2.1}
+		{z=-1.65,y=1.125,lag=0.2,znear=1},
+		{z=-0.7,y=0.3,lag=0.1,znear=0.25},
+		{z=-0.01,y=0.1,lag=0.6,znear=0.05}
 	}
 
 	local current_pov=view_pov[view_mode+1]
-	local pov_z,pov_y,pov_lag,max_dist=current_pov.z,current_pov.y,current_pov.lag,current_pov.dist
+	local pov_z,pov_y,pov_lag=current_pov.z,current_pov.y,current_pov.lag
 	z_near=current_pov.znear
 	--
 	local up={0,1,0}
@@ -339,7 +345,7 @@ function make_cam()
 
 	-- screen shake
 	local shkx,shky=0,0
-	camera(-64,-64)
+	camera()
 	
 	return {
 		pos={0,0,0},
@@ -354,7 +360,7 @@ function make_cam()
 			elseif btn(4) then
 				local next_mode=(view_mode+1)%#view_pov
 				local next_pov=view_pov[next_mode+1]
-				local next_pov_z,next_pov_y,next_pov_lag,next_znear,next_dist=next_pov.z,next_pov.y,next_pov.lag,next_pov.znear,next_pov.dist
+				local next_pov_z,next_pov_y,next_pov_lag,next_znear=next_pov.z,next_pov.y,next_pov.lag,next_pov.znear
 				switching_async=cocreate(function()
 					for i=0,30 do
 						local t=0.22
@@ -362,7 +368,6 @@ function make_cam()
 						pov_y=lerp(pov_y,next_pov_y,t)
 						pov_lag=lerp(pov_lag,next_pov_lag,t)
 						z_near=lerp(z_near,next_znear,t)
-						max_dist=lerp(max_dist,next_dist,t)
 						yield()
 					end
 					-- commit change
@@ -375,7 +380,7 @@ function make_cam()
 			if abs(shkx)<0.5 and abs(shky)<0.5 then
 				shkx,shky=0,0
 			end
-			camera(shkx-64,shky-64)
+			camera(shkx,shky)
 		end,
 		track=function(self,pos,a,u)
    			pos=v_clone(pos)
@@ -408,26 +413,26 @@ function make_cam()
 		project_poly=function(self,p,col)
 			color(col)
 			local p0,nodes=p[#p],{}
+			local w0=63.5/p0[3]
 			-- band vs. flr: -0.20%
-			local x0,y0=p0.x,p0.y
+			local x0,y0=63.5+band(0xffff,p0[1]*w0),63.5-band(0xffff,p0[2]*w0)
 
 			for i=1,#p do
 				local p1=p[i]
-				local x1,y1=p1.x,p1.y
+				local w1=63.5/p1[3]
+				local x1,y1=63.5+band(0xffff,p1[1]*w1),63.5-band(0xffff,p1[2]*w1)
 				-- backup before any swap
 				local _x1,_y1=x1,y1
 				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
 				local dx=(x1-x0)/(y1-y0)
-				if(y0<-64) x0-=(y0+64)*dx y0=-64
-				local cy0,cy1=ceil(y0),ceil(y1)
-				local _x0,_y0=x0,y0
-				-- subpixel shifting
-				x0+=(cy0-y0)*dx
-				for y=cy0,cy1-1 do
+				if(y0<0) x0-=y0*dx y0=0
+				for y=y0,min(y1,128) do
 					local x=nodes[y]
+					-- any 'other' side?
 					if x then
 						rectfill(x,y,x0,y)
 					else
+						-- first pixel on this row
 						nodes[y]=x0
 					end
 					x0+=dx
@@ -438,7 +443,7 @@ function make_cam()
 		end,
 		visible_tiles=function(self)
 			local x0,y0,x,y=to_tile_coords(self.pos)
-			local tiles,angle,max_dist={[x0+shl(y0,5)]=0},self.angle,flr(max_dist)
+			local tiles,angle={[x0+shl(y0,5)]=0},self.angle 
    
    			for i,a in pairs(angles) do
 				local v,u=cos(a+angle),-sin(a+angle)
@@ -457,9 +462,8 @@ function make_cam()
 					disty=(y-mapy)*ddy
 				else
 					disty=(mapy+1-y)*ddy
-				end
-
-				for dist=0,1 do
+				end	
+				for dist=0,3 do
 					if distx<disty then
 						distx+=ddx
 						mapx+=mapdx
@@ -681,9 +685,7 @@ function make_car(model,p,angle)
 				max_rpm=0.4
 			end
 			-- above 0
-			-- should never happen actually
 			pos[2]=max(pos[2])
-
 			-- collision
 			if oldf and oldf.borders then
 				local hit,force,hit_n=face_collide(oldf,pos,0.25)
@@ -932,7 +934,7 @@ function start_state()
 		-- draw
 		function()
 			local sx=flr(ttl/30)*12
-			printxl(sx,32,12,16,-14)
+			printxl(sx,32,12,16,50)
 
 			-- todo: allow acceleration during "go"
 			-- todo: boost if acceleration is at frame 15
@@ -968,54 +970,50 @@ function play_state()
 
 	local function track_project(v,pos,cc,ss)
 		local x,y=v[1]-pos[1],v[3]-pos[3]
-		return 44+0.3*(cc*x-ss*y),-0.3*(ss*x+cc*y)
+		return 96+0.3*(cc*x-ss*y),64-0.3*(ss*x+cc*y)
 	end
 		
 	return
 		-- draw
 		function()
-			printb("lap time",26,-62,7,0)
-			printb("time",nil,-62,7,0)
-			printf(tostr(ceil(remaining_t/30)),nil,-55,xlfont)
+			printb("lap time",90,2,7,0)
+			printb("time",56,2,7,0)
+			printf(tostr(ceil(remaining_t/30)),nil,9,xlfont)
 			
 			-- speed
-			printf(tostr(flr(plyr:get_speed())),-33,50,xlfont)
-			printr("km/h",-32,57,10,9)
+			printf(tostr(flr(plyr:get_speed())),31,114,xlfont)
+			printr("km/h",32,121,10,9)
 
 			-- blink go!
-			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,-14)
+			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,50)
 
 			-- extend time message
-			if(extend_time_t>0 and extend_time_t%30<15) printr("extend time",nil,-36,10,4)
-			
-			-- previous times
-			local y=-55
+			if(extend_time_t>0 and extend_time_t%30<15) printr("extend time",nil,28,10,4)
+			local y=9
 			for i=1,#laps do
-				printb(i,26,y,9,0)
-				printb(laps[i],34,y,best_i==i and 9 or 7,0)
+				printb(i,90,y,9,0)
+				printb(laps[i],98,y,best_i==i and 9 or 7,0)
 				y+=7
 			end
-			printb(#laps+1,26,y,9,0)
-			printb(time_tostr(lap_t),34,y,7,0)
+			printb(#laps+1,90,y,9,0)
+			printb(time_tostr(lap_t),98,y,7,0)
 			
 			-- track map
 			local pos,angle=plyr:get_pos()
-			local cc,ss,track_outline=cos(angle),-sin(angle),track.npc_path
+			local cc,ss=cos(angle),-sin(angle)
 			-- draw npc path
-			local x0,y0=track_project(track_outline[#track_outline],pos,cc,ss)
-			color(0)
-			for i=1,#track_outline,2 do
-				local x1,y1=track_project(track_outline[i],pos,cc,ss)
-				line(x0,y0,x1,y1)
+			local x0,y0=track_project(track.npc_path[#track.npc_path],pos,cc,ss)
+			for i=1,#track.npc_path,2 do
+				local x1,y1=track_project(track.npc_path[i],pos,cc,ss)
+				line(x0,y0,x1,y1,0x1000)
 				x0,y0=x1,y1
 			end
 			-- draw other cars
 			for _,npc in pairs(npcs) do
-				local x0,y0=track_project(npc:get_pos(),pos,cc,ss)
+				x0,y0=track_project(npc:get_pos(),pos,cc,ss)
 				circfill(x0,y0,1.5,0x4)
 			end
-			-- player
-			circfill(44,0,1,0x8)
+			circfill(96,64,1,0x8)
 		end,
 		-- update
 		function()
@@ -1076,9 +1074,9 @@ function gameover_state(win,total_t)
 		function()
 			-- rotating game over/goal
 			if win then 
-				print3d(32,0,65,16,-14,angle)
+				print3d(32,0,65,16,50,angle)
 			else
-				print3d(39,32,57,32,-14,angle)
+				print3d(39,32,57,32,50,angle)
 			end
 
 			-- total time
@@ -1105,20 +1103,15 @@ function _init()
 	poke(0x5f34,1)
 
 	-- track name (from params)
-	local track_id=stat(6)
-	if track_id=="" then
+	local track_name=stat(6)
+	if track_name=="" then
 		-- starting without context
 		cls(1)
-		-- bigforest
-		track_id=0
+		track_name="bigforest"
 	end
-	
+	track=unpack_track(track_name)
 	-- load regular 3d models
 	unpack_models()
-
-	-- track data
-	track=unpack_track(track_id)
-
 	-- restore
 	reload()
 
@@ -1155,51 +1148,97 @@ end
 -- saves the 'if not ...' in inner loop
 local v_cache_cls={
 	__index=function(t,k)
-		if(not k) return
 		-- inline: local a=m_x_v(t.m,t.v[k]) 
 		local v,m=t.v[k],t.m
 		local x,y,z=v[1],v[2],v[3]
-		local ax,ay,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]
+		local ax,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[3]*x+m[7]*y+m[11]*z+m[15]
 	
 		local outcode=k_near
 		if(az>z_near) outcode=k_far
 		if(ax>az) outcode+=k_right
 		if(-ax>az) outcode+=k_left
 		
-		-- assume vertex is visible, compute 2d coords
-		local a={ax,ay,az,outcode=outcode,clipcode=band(outcode,2),x=shl(ax/az,6),y=-shl(ay/az,6)} 
-		t[k]=a
-		return a
+		-- slower (0.2%)
+		-- -shl(shr(az-z_near,31),17)-shl(shr(az-ax,31),18)-shl(shr(az+ax,31),19)}
+
+		local ay=m[2]*x+m[6]*y+m[10]*z+m[14]
+		t[k]={ax,ay,az,outcode=outcode} 
+		return t[k]
 	end
 }
 
-function collect_faces(faces,cam_pos,v_cache,out)
-	local sessionid=sessionid
+function project_verts(m,verts)
+	local a1,a2,a3,a5,a6,a7,a9,a10,a11,a13,a14,a15=m[1],m[2],m[3],m[5],m[6],m[7],m[9],m[10],m[11],m[13],m[14],m[15]
+	local k_far,k_near,k_right,k_left=0,2,4,8
+	for k,v in pairs(verts) do
+		-- inline: local a=m_x_v(t.m,t.v[k]) 
+		local x,y,z=v[1],v[2],v[3]
+		local ax,az=a1*x+a5*y+a9*z+a13,a3*x+a7*y+a11*z+a15
+	
+		local outcode=k_near
+		if(az>z_near) outcode=k_far
+		if(ax>az) outcode+=k_right
+		if(-ax>az) outcode+=k_left
+		
+		-- slower (0.2%)
+		-- -shl(shr(az-z_near,31),17)-shl(shr(az-ax,31),18)-shl(shr(az+ax,31),19)}
+
+		verts[k]={ax,a2*x+a6*y+a10*z+a14,az,outcode=outcode,clipcode=band(outcode,2)} 
+	end
+end
+
+function collect_faces(v,faces,cam_pos,v_cache,out)
+	local n,sessionid=#out,sessionid
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
-		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
-			-- project vertices
-			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]			
-			-- mix of near/far verts?
-			if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
-				local verts={v0,v1,v2,v3}
+		if face.sessionid!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
+			-- collect vertices
+			local v0,v1,v2,v3=face[1],face[2],face[3],face[4]
+			v_cache[v0]=v[v0]
+			v_cache[v1]=v[v1]
+			v_cache[v2]=v[v2]
+			if(v3) v_cache[v3]=v[v3]
+			face.sessionid=sessionid
+			-- todo: remove - not needed
+			n+=1
+			out[n]=face
+		end
+	end
+end
 
-				local ni,is_clipped,y,z=9,v0.clipcode+v1.clipcode+v2.clipcode,v0[2]+v1[2]+v2[2],v0[3]+v1[3]+v2[3]
-				if v3 then
-					is_clipped+=v3.clipcode
-					y+=v3[2]
-					z+=v3[3]
-					ni=16
-				end
-				-- mix of near+far vertices?
-				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
-				if #verts>2 then
-					verts.f=face
-					verts.key=ni/(y*y+z*z)
-					out[#out+1]=verts
-				end
+function project_faces(faces,cam,v_cache,out)
+	-- project verts
+	project_verts(cam.m,v_cache)
+
+	local n=#out
+	-- clipping
+	for _,face in pairs(faces) do
+		-- project vertices
+		local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]
+		local outcode,is_clipped,y,z=band(v0.outcode,band(v1.outcode,v2.outcode)),v0.clipcode+v1.clipcode+v2.clipcode,v0[2]+v1[2]+v2[2],v0[3]+v1[3]+v2[3]
+		-- quad?
+		if v3 then
+			outcode=band(outcode,v3.outcode)
+			is_clipped+=v3.clipcode
+			y+=v3[2]
+			z+=v3[3]
+		end
+		
+		-- mix of near/far verts?
+		if outcode==0 then
+			local verts={v0,v1,v2,v3}
+
+			-- mix of near+far vertices?
+			if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+			if #verts>2 then
+				verts.f=face
+				y/=face.ni
+				z/=face.ni
+				verts.key=1/(y*y+z*z)
+				-- 0.1% faster vs [#out+1]
+				n+=1
+				out[n]=verts
 			end
-			face.session=sessionid	
 		end
 	end
 end
@@ -1253,35 +1292,68 @@ function collect_model_faces(model,m,parts,out)
 	end
 end
 
--- draw quad (or tri)
-function draw_quad(v0,v1,v2,v3,col)
-	if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
-		local verts={v0,v1,v2,v3}
-		if(v0.clipcode+v1.clipcode+v2.clipcode+(v3 and v3.clipcode or 0)>0) verts=z_poly_clip(z_near,verts)
-		if(#verts>2) cam:project_poly(verts,col)
-	end
-end
-
-function draw_faces(faces,v_cache)
-	for i=1,#faces do
-		local d=faces[i]
-		local main_face=d.f
-		cam:project_poly(d,main_face.c)
+function draw_drawables(v,drawables,m)
+	for i=1,#drawables do
+		local d=drawables[i]
+		local face=d.f
+		cam:project_poly(d,face.c)
 		-- details?
 		if d.key>0.0200 then
 			-- face details
-			if main_face.inner then -- d.dist<2 then
-				-- reuse array
-				for _,face in pairs(main_face.inner) do
-					draw_quad(v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]],face.c)
+			if face.inner then -- d.dist<2 then				
+				-- collect
+				local v_cache={}
+				for _,face in pairs(face.inner) do
+					local v0,v1,v2,v3=face[1],face[2],face[3],face[4]
+					v_cache[v0]=v[v0]
+					v_cache[v1]=v[v1]
+					v_cache[v2]=v[v2]
+					if(v3) v_cache[v3]=v[v3]
+				end
+
+				-- project verts
+				project_verts(m,v_cache)
+
+				-- draw
+				for _,face in pairs(face.inner) do
+					-- project vertices
+					local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]
+					local outcode,is_clipped=band(v0.outcode,band(v1.outcode,v2.outcode)),v0.clipcode+v1.clipcode+v2.clipcode
+					-- quad?
+					if v3 then
+						outcode=band(outcode,v3.outcode)
+						is_clipped+=v3.clipcode
+					end
+					if outcode==0 then
+						local verts={v0,v1,v2,v3}
+						if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+						if(#verts>2) cam:project_poly(verts,face.c)
+					end
 				end
 			end
 			-- face skidmarks
-			if main_face.skidmarks then
+			if false then --d.f.skidmarks then
 				local m=v_cache.m
-				for _,skids in pairs(main_face.skidmarks) do
-					local s_cache=setmetatable({m=v_cache.m,v=skids},v_cache_cls)
-					draw_quad(s_cache[1],s_cache[2],s_cache[3],s_cache[4],0)
+				for _,skids in pairs(d.f.skidmarks) do
+					local verts,outcode,is_clipped={},0xffff,0
+					for ki=1,4 do
+						-- world to cam
+						local a=m_x_v(m,skids[ki])
+						local ax,az=a[1],a[3]
+						local aout=az>z_near and k_far or k_near
+						if ax>az then aout+=k_right
+						elseif -ax>az then aout+=k_left
+						end
+						-- behind near plane?
+						is_clipped+=band(aout,2)
+						outcode=band(outcode,aout)
+						verts[ki]=a
+					end
+					if outcode==0 then
+						-- mix of near+far vertices?
+						if(is_clipped>0) verts=z_poly_clip(z_near,verts)
+						if(#verts>2) cam:project_poly(verts,0)
+					end
 				end
 			end
 		end
@@ -1292,32 +1364,36 @@ function _draw()
 	sessionid+=1
 
 	-- background
-	-- todo: read from track
-	rectfill(-64,-64,64,63,0xcc)
-	rectfill(-64,0,63,63,0x11)
+	--[[
 	local x0=-shl(cam.angle,7)%128
- 	map(track.map,0,x0-64,-64,16,16)
+ 	map(track.map,0,x0,0,16,16)
  	if x0>0 then
-	 	map(track.map,0,x0-192,-64,16,16)
+	 	map(track.map,0,x0-128,0,16,16)
  	end
+	]]
+	cls(12)
 
 	-- track
-	local v_cache=setmetatable({m=cam.m,v=track.v},v_cache_cls)
+	local v_cache,faces_out={},{}
 
-	local out,tiles,cam_pos={},cam:visible_tiles(),cam.pos
-	
+	local tiles,cam_pos=cam:visible_tiles(),cam.pos
+
 	for k,dist in pairs(tiles) do
 		local faces=track.voxels[k]
 		if faces then
-			collect_faces(faces,cam_pos,v_cache,out)
+			collect_faces(track.v,faces,cam_pos,v_cache,faces_out)
 		end 
 	end
 
+	local out={}
+	project_faces(faces_out,cam,v_cache,out)
+
 	sort(out)
 
-	draw_faces(out,v_cache)
-	
-	-- clear vertex 
+	draw_drawables(track.v,out,cam.m)
+
+	-- clear vertex cache
+	--[[
 	out={}
 	
 	for _,actor in pairs(actors) do
@@ -1332,17 +1408,20 @@ function _draw()
 			collect_model_faces(actor.model,m,actor,out)
 		end
 	end
-	
 	sort(out)
-	
-	draw_faces(out)
+	]]
+
+
+	--t0=stat(1)
+	-- draw_faces(out)
+	--_cpu["draw"]=stat(1)-t0
 
 	-- hud and game state display
-	draw_state()
-	
-	local y=-64
+	-- draw_state()
 
-	print(stat(1).."\n"..stat(0).."b",-62,y+2,0)
+	local y=2
+
+	print(stat(1).."\n"..stat(0).."b",2,y+2,0)
 
 	-- dark green
 	pal(14,128,1)
@@ -1352,13 +1431,13 @@ end
 
 -->8
 -- unpack data & models
-local cart_id,mem
+local cart_id,cart_name,mem=1,"track"
 local cart_progress=0
 function mpeek()
 	if mem==0x4300 then
 		cart_progress=0
-		cart_id+=1
-		reload(0,0,0x4300,"tracks_"..cart_id..".p8")
+		reload(0,0,0x4300,cart_name.."_"..cart_id..".p8")
+		cart_id += 1
 		mem=0
 	end
 	local v=peek(mem)
@@ -1479,9 +1558,6 @@ function unpack_model(model,scale)
 	end)
 end
 function unpack_models()
-	-- cars are in first data cart
-	reload(0,0,0x4300,"tracks_0.p8")
-	cart_id,mem=0,0
 	-- for all models
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
@@ -1525,14 +1601,9 @@ function unpack_models()
 end
 
 -- unpack multi-cart track
-function unpack_track(id)
-	-- assume we are not at cart boundary!!
-	mem+=id*3
-	-- read track offsets
-	cart_id,mem=unpack_int(),unpack_int(2)
-
-	reload(0,0,0x4300,"tracks_"..cart_id..".p8")
-
+function unpack_track(name)
+	cart_name,mem=name,0
+	reload(0,0,0x4300,cart_name.."_0.p8")
 	local id=unpack_int()
 	local model={
 		id=id,
@@ -1581,26 +1652,39 @@ function unpack_track(id)
 end
 
 -->8
--- clipping
+-- trifill & clipping
+-- by @p01
+function p01_trapeze_h(l,r,lt,rt,y0,y1)
+	lt,rt=(lt-l)/(y1-y0),(rt-r)/(y1-y0)
+	if(y0<0)l,r,y0=l-y0*lt,r-y0*rt,0
+	for y0=y0,min(y1,128) do
+	 rectfill(l,y0,r,y0)
+	 l+=lt
+	 r+=rt
+	end
+  end
+  function p01_trapeze_w(t,b,tt,bt,x0,x1)
+   tt,bt=(tt-t)/(x1-x0),(bt-b)/(x1-x0)
+   if(x0<0)t,b,x0=t-x0*tt,b-x0*bt,0
+   for x0=x0,min(x1,128) do
+	rectfill(x0,t,x0,b)
+	t+=tt
+	b+=bt
+   end
+  end
+
 function z_poly_clip(znear,v)
-	local res,v0={},v[#v]
-	local d0=v0[3]-znear
+	local res={}
+	local v0,v1,d1,t,r=v[#v]
+	local d0=-znear+v0[3]
 	for i=1,#v do
-		local v1=v[i]
-		local d1=v1[3]-znear
+		v1=v[i]
+		d1=-znear+v1[3]
 		if d1>0 then
-			if d0<=0 then
-				local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-				nv.x=shl(nv[1]/nv[3],6)
-				nv.y=-shl(nv[2]/nv[3],6) 
-				res[#res+1]=nv
-			end
+			if(d0<=0) res[#res+1]=v_lerp(v0,v1,d0/(d0-d1))
 			res[#res+1]=v1
 		elseif d0>0 then
-			local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-			nv.x=shl(nv[1]/nv[3],6)
-			nv.y=-shl(nv[2]/nv[3],6) 
-			res[#res+1]=nv
+			res[#res+1]=v_lerp(v0,v1,d0/(d0-d1))
 		end
 		v0,d0=v1,d1
 	end
@@ -1624,14 +1708,14 @@ function time_tostr(t)
 end
 
 function printb(s,x,y,c1,c2)
-	x=x or -shl(#s,1)
+	x=x or 64-shl(#s,1)
 	?s,x,y+1,c2 or 1
 	?s,x,y,c1
 end
 
 -- raised print
 function printr(s,x,y,c,c2)
-	x=x or -shl(#s,1)
+	x=x or 64-shl(#s,1)
 	local sy=c2 and -2 or -1
 	for i=-1,1 do
         for j=sy,1 do
@@ -1653,7 +1737,7 @@ function printf(s,x,y,font)
 		x-=#s*w
 	else
 		-- centered
-		x=-shr(#s*w,1)
+		x=64-shr(#s*w,1)
 	end
 	for i=1,#s do
 		local sx=font[sub(s,i,i)]*w
@@ -1670,7 +1754,7 @@ function printxl(sx,sy,sw,sh,dy)
 	palt(14,true)
 	palt(0,false)
 
- sspr(sx,sy,sw,sh,-sw/2,dy)
+ sspr(sx,sy,sw,sh,64-sw/2,dy)
  palt()	
 end
 
@@ -1689,49 +1773,12 @@ function print3d(sx,sy,sw,sh,y,angle)
 	palt(0,false)
  	local u,du,dw=0,sh*w1/len,(w1-w0)/len
  	for y=y+y0,y+y1-0.5 do
- 		sspr(sx,sy+u/w0,sw,1,-w0,y,2*w0,1)
+ 		sspr(sx,sy+u/w0,sw,1,63.5-w0,y,2*w0,1)
   		u+=du
   		w0+=dw
  	end
 	palt()
 end
-
---[[
-local odraw,oupdate,omake_plyr=_draw,_update,make_plyr
-local _cpu,_ttl,_bench=0,2*30,10*30
-function make_plyr(_,angle)
-	-- fix position
-	local p=omake_plyr({-23.7,1.25,-9.80},angle)
-	local rpm=0
-	p.control=function(self)	
-		rpm=rpm+0.1
-		rpm=self:steer(0,rpm)
-	end
-	return p
-end
-
-function _update()
-	_bench-=1
-	if(_bench<0) extcmd("video") stop()
-	oupdate()
-end
-function _draw()
-	camera(-64,-64)
-	odraw()
-	local cpu=stat(1)
-	camera()
-
-	rectfill(0,121,127,127,0x11)
-	_cpu=max(_cpu,cpu)
-	-- refresh max every 5s
-	_ttl-=1
-	if(_ttl<0) _cpu=cpu _ttl=2*30
-	
-	local s=tostr(flr(1000*_cpu)/10)
-	s="2020: "..s..sub("00.00",#s+1,5).."%"
-	print(s,66,122,7)
-end
-]]
 
 __gfx__
 00000000cccccccccccccccccccccccceeeee00000ee0eeeeeeee00000eeeeeeeeeeeee0eeeeeeee000000eeeeeeee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
@@ -1750,22 +1797,22 @@ c6c6c6c6777777777777777777770000e08880eeee0880eee0880eeeee0880eee080eeeee0880eee
 6c6c6c6c777777777777777777777700ee088800008880eeee08800000880eee0880eeeee08880ee008800000880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 66666666777777777777777777777770eee0088888800eeeeee008888800eee088880eee08888800888888888880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 77777777777777777777777777777777eeeee000000eeeeeeeeee00000eeeeee0000eeeee00000ee00000000000eee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-111111111111111133333333cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeedddddddd33333333cccccccc
-c1c1c1c1ffffffff33333333cccccc33eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee4949494933333333cccccc43
-11111111f3f3f3f333333333ccccc333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea4a4a4a433333333cccc4434
-111111113f3f3f3f33333333cccc3333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbbbbbbb33333333ccc44443
-111c111c3333333333333333cc333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333cc434434
-111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebcbcbcbc33333333cc444343
-111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333c4343433
-11111c11333333333333333333333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc3333333343433333
-1111111111111111c1c1c1c1cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee33ffffffcccccccccccccccc
-11c11111111111111c1c1c1c3bcccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeffffffffcccccccc77777777
-1c1c111111111111c1c1c1c133bbcccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeefffffffffffcccff66666666
-11111111111111111c1c1c1c3bbbbccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7a7a7a7a7aaaaaaacccccccc
-1111111111111111c1c1c1c133bb3bcceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7777777777aaaaa7cccccccc
-11111111111111111c1c1c1c3333bbcceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1ccccccccc
-11111c1111111111c1c1c1c1333333bceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeec1c1c1c1c1c1c1c1cccccccc
-1111c1c1111111111c1c1c1c3333333beeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1ccccccccc
+111111116666666633333333cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee333333333333333300000000
+c1c1c1c16d6d6d6d33333333cccccc33eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee333333333333333300000000
+111111113636363633333333ccccc333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee333333333333333300000000
+111111113333333333333333cccc3333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee333333333333333300000000
+111c111c3333333333333333cc333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee3b3b3b3b3333333300000000
+111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeb3b3b3b33333333300000000
+111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee666666663333333300000000
+11111c11333333333333333333333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee777777773333333300000000
+1111111111111111c1c1c1c1cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee33ffffffcccccccc00000000
+11c11111111111111c1c1c1c3bcccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeffffffffcccccccc00000000
+1c1c111111111111c1c1c1c133bbcccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeefffffffffffcccff00000000
+11111111111111111c1c1c1c3bbbbccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7a7a7a7a7aaaaaaa00000000
+1111111111111111c1c1c1c133bb3bcceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7777777777aaaaa700000000
+11111111111111111c1c1c1c3333bbcceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1c00000000
+11111c1111111111c1c1c1c13b3333bceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeec1c1c1c1c1c1c1c100000000
+1111c1c1111111111c1c1c1c3333333beeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1c00000000
 eeeee00eeeeeeeee0000eeeeeeee0000eeeeeeeeeeee0000eee0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
 eee00770eeeeeee077770eeeeee077770eeeeeeeeee0777700070eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
 ee077770eeeeee07777770eeee07007770eeeeeeee07700007770eeeee000000eeeeee00ee00e0000eeeeeee00000eee00000000000000000000000000000000
@@ -1812,16 +1859,23 @@ e0aaaaaa0eee0aa90eeee0aaaaaa0ee0aaaaaa0eeeee0aaa900aaaaaaa90e0aaaaaa0e0aaaaaaa90
 e09999990ee09999990e0999999990e09999990eeeeeee0990e09999990ee09999990eeee0990eeee09999990ee09999990e0000000000000000000000000000
 ee000000eee00000000e0000000000ee000000eeeeeeee0000ee000000eeee000000eeeee0000eeeee000000eeee000000ee0000000000000000000000000000
 __map__
-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000001020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0001020111110200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0111111111111102010200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-111111111111111111110200000000010000000000000000000000000000000000002f3300000000000000002f2233000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-1111111111111111111111020102011110101010101010101010101010101010002f2e2e33000023330000232e2e2e330000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-21212121212121212121212121212121323232323232323232323232323232323f2d2d2d2d3f3f2d2d3f3f2d2d2d2d2d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0000000000000000000000000000000020202020202020202020202020202020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0303030301020303030303030303030303030303030303030303030303030303030303030303030303030303030303030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0301020111110203030303030303030303030303030303030303030303030303030303030303030303030303030303030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0111111111111102010203030303030303030303030303030303030303030303030303030303030303030303032333030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+1111111111111111111102030303030103030303030303030303030303030303030323330303030303030303232e2e330000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+111111111111111111111102010201110303030303030303030303030303030333232e2e33030323330303232e2e2e2e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+21212121212121212121212121212121101010101010101010101010101010102d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222232323232323232323232323232323232323232323232323232323232323232320000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222220202020202020202020202020202020202020202020202020202020202020200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+2222222222222222222222222222222231313131313131313131313131313131313131313131313131313131313131310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
 00010002201501b750131500415004150000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00010002281301d720211301c250231501c2501b2500d1501f2500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000

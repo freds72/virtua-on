@@ -10,8 +10,8 @@ local razz
 function _init()
  razz={
 		--edge_rasterizer,
-		--poly_rasterizer,
-		trifill_rasterizer,
+		poly_rasterizer,
+		-- trifill_rasterizer,
 		--hybrid_rasterizer,
 		convex_rasterizer
 	}
@@ -37,7 +37,7 @@ function _update()
 		y-=40
 		return 64+scale*(x*ss-y*cc),64+scale*(x*cc+y*ss)
 	end
-	for i=1,8 do
+	for i=1,1 do
 		cc,ss=cos(angle+0.23*i),-sin(angle+0.23*i)
 		local x0,y0=rotate(24,24)
 		local x1,y1=rotate(96,24)
@@ -463,24 +463,38 @@ function convex_rasterizer()
   		color(p.c)
 
 		local v0,nodes=v[#v],{}
-		local x0,y0=v0[1],band(0xffff,v0[2])
+		local x0,y0=v0[1],v0[2]
 		for i=1,#v do
 			local v1=v[i]
-			local x1,y1=v1[1],band(0xffff,v1[2])
+			local x1,y1=v1[1],v1[2]
 			local _x1,_y1=x1,y1
 			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-			local dx=(x1-x0)/(y1-y0)
-			if(y0<0) x0-=y0*dx y0=0
-			for y=y0,min(y1,128) do
-				local x=nodes[y]
-				--nodes[y]=x and rectfill(x,y,x0,y) or x0
-				if x then
-					rectfill(x,y,x0,y)
-				else
-					nodes[y]=x0
+			local lines=ceil(y1)-ceil(y0)
+			if lines>0 then	
+				
+				local dx=(x1-x0)/(y1-y0)
+				if(y0<0) x0-=y0*dx y0=0
+				local subpix=ceil(y0)-y0
+				--assert(abs(subpix)<10,subpix.." ("..x0..","..y0..")-("..x1..","..y1..")")
+    local _x0,_y0=x0,y0
+				x0+=subpix*dx
+				local n=0
+				for y=ceil(y0),ceil(y1)-1 do
+					pset(x0,y,4)
+					x0+=dx
+					n+=1
 				end
-				x0+=dx
+				--line(_x0,_y0,_x0-subpix,_y0,8)
+				--pset(x1,y1,11)
+				local s=subpix.." ("..n..")\n"
+				s=s.."(".._x0..",".._y0..")\n"
+				s=s.."("..x1..","..y1..")\n"
+				s=s..(_x0-subpix).."\n"
+				s=s..(_x0).."\n"
+				
+				--print(s,1*(_x0-64)+64,1*(_y0-64)+64+2,7)
 			end
+			--break
 			x0,y0=_x1,_y1
 		end
   	end
