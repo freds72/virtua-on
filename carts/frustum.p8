@@ -421,13 +421,16 @@ function make_cam()
 				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
 				local dx=(x1-x0)/(y1-y0)
 				if(y0<-64) x0-=(y0+64)*dx y0=-64
-				for y=y0,min(y1,63) do
+				local cy0,cy1=ceil(y0),ceil(y1)
+				--assert(abs(subpix)<10,subpix.." ("..x0..","..y0..")-("..x1..","..y1..")")
+				local _x0,_y0=x0,y0
+				-- subpixel shifting
+				x0+=(cy0-y0)*dx
+				for y=cy0,cy1-1 do
 					local x=nodes[y]
-					-- any 'other' side?
 					if x then
 						rectfill(x,y,x0,y)
 					else
-						-- first pixel on this row
 						nodes[y]=x0
 					end
 					x0+=dx
@@ -1167,7 +1170,7 @@ local v_cache_cls={
 		if(-ax>az) outcode+=k_left
 		
 		-- assume vertex is visible, compute 2d coords
-		local a={ax,ay,az,outcode=outcode,clipcode=band(outcode,2),x=band(0xffff,shl(ax/az,6)),y=-band(0xffff,shl(ay/az,6))} 
+		local a={ax,ay,az,outcode=outcode,clipcode=band(outcode,2),x=shl(ax/az,6),y=-shl(ay/az,6)} 
 		t[k]=a
 		return a
 	end
@@ -1591,15 +1594,15 @@ function z_poly_clip(znear,v)
 		if d1>0 then
 			if d0<=0 then
 				local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-				nv.x=band(0xffff,shl(nv[1]/nv[3],6)) 
-				nv.y=-band(0xffff,shl(nv[2]/nv[3],6)) 
+				nv.x=shl(nv[1]/nv[3],6)
+				nv.y=-shl(nv[2]/nv[3],6) 
 				res[#res+1]=nv
 			end
 			res[#res+1]=v1
 		elseif d0>0 then
 			local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-			nv.x=band(0xffff,shl(nv[1]/nv[3],6)) 
-			nv.y=-band(0xffff,shl(nv[2]/nv[3],6)) 
+			nv.x=shl(nv[1]/nv[3],6)
+			nv.y=-shl(nv[2]/nv[3],6) 
 			res[#res+1]=nv
 		end
 		v0,d0=v1,d1
