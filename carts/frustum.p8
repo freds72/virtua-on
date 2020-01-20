@@ -417,13 +417,11 @@ function make_cam()
 				-- backup before any swap
 				local _x1,_y1=x1,y1
 				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-				local dx=(x1-x0)/(y1-y0)
+				local cy0,cy1,dx=ceil(y0),ceil(y1),(x1-x0)/(y1-y0)
 				if(y0<-64) x0-=(y0+64)*dx y0=-64
-				local cy0,cy1=ceil(y0),ceil(y1)
-				local _x0,_y0=x0,y0
 				-- subpixel shifting
 				x0+=(cy0-y0)*dx
-				for y=cy0,cy1-1 do
+				for y=cy0,min(cy1-1,63) do
 					local x=nodes[y]
 					if x then
 						rectfill(x,y,x0,y)
@@ -1292,9 +1290,8 @@ function _draw()
 	sessionid+=1
 
 	-- background
-	-- todo: read from track
-	rectfill(-64,-64,64,63,0xcc)
-	rectfill(-64,0,63,63,0x11)
+	rectfill(-64,-64,64,63,track.sky_color)
+	rectfill(-64,0,63,63,track.ground_color)
 	local x0=-shl(cam.angle,7)%128
  	map(track.map,0,x0-64,-64,16,16)
  	if x0>0 then
@@ -1533,10 +1530,14 @@ function unpack_track(id)
 
 	reload(0,0,0x4300,"tracks_"..cart_id..".p8")
 
-	local id=unpack_int()
+	local id,colors=unpack_int(),unpack_int()
+	local ground_color,sky_color=band(0xf,colors),shr(band(0xf0,colors),4)
 	local model={
 		id=id,
 		map=16*id,
+		-- convert to fillp-compatible color
+		ground_color=ground_color+16*ground_color,
+		sky_color=sky_color+16*sky_color,
 		v={},
 		f={},
 		n={},
