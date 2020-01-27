@@ -405,35 +405,6 @@ function make_cam()
 			
 			self.pos=pos
 		end,
-		project_poly=function(self,p,col)
-			color(col)
-			local p0,nodes=p[#p],{}
-			-- band vs. flr: -0.20%
-			local x0,y0=p0.x,p0.y
-
-			for i=1,#p do
-				local p1=p[i]
-				local x1,y1=p1.x,p1.y
-				-- backup before any swap
-				local _x1,_y1=x1,y1
-				if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-				local cy0,cy1,dx=ceil(y0),ceil(y1),(x1-x0)/(y1-y0)
-				if(y0<-64) x0-=(y0+64)*dx y0=-64
-				-- subpixel shifting
-				x0+=(cy0-y0)*dx
-				for y=cy0,min(cy1-1,63) do
-					local x=nodes[y]
-					if x then
-						rectfill(x,y,x0,y)
-					else
-						nodes[y]=x0
-					end
-					x0+=dx
-				end
-				-- next vertex
-				x0,y0=_x1,_y1
-			end
-		end,
 		visible_tiles=function(self)
 			local x0,y0,x,y=to_tile_coords(self.pos)
 			local tiles,angle,max_dist={[x0+shl(y0,5)]=0},self.angle,flr(max_dist)
@@ -674,7 +645,7 @@ function make_car(model,p,angle)
 				oldf=newf
 			end
 			-- on ground: limit max speed
-			max_rpm=0.6			
+			max_rpm=0.6		
 			if oldf and band(oldf.flags,0x4)==0 then
 				max_rpm=0.4
 			end
@@ -1251,12 +1222,13 @@ function collect_model_faces(model,m,parts,out)
 	end
 end
 
--- draw quad (or tri)
-function draw_quad(v0,v1,v2,v3,col)
+-- draw face
+-- handles clipping as needed
+function draw_face(v0,v1,v2,v3,col)
 	if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
 		local verts={v0,v1,v2,v3}
 		if(v0.clipcode+v1.clipcode+v2.clipcode+(v3 and v3.clipcode or 0)>0) verts=z_poly_clip(z_near,verts)
-		if(#verts>2) cam:project_poly(verts,col)
+		if(#verts>2) polyfill(verts,col)
 	end
 end
 
@@ -1264,14 +1236,14 @@ function draw_faces(faces,v_cache)
 	for i=1,#faces do
 		local d=faces[i]
 		local main_face=d.f
-		cam:project_poly(d,main_face.c)
+		polyfill(d,main_face.c)
 		-- details?
 		if d.key>0.0200 then
 			-- face details
 			if main_face.inner then -- d.dist<2 then
 				-- reuse array
 				for _,face in pairs(main_face.inner) do
-					draw_quad(v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]],face.c)
+					draw_face(v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]],face.c)
 				end
 			end
 			-- face skidmarks
@@ -1279,7 +1251,7 @@ function draw_faces(faces,v_cache)
 				local m=v_cache.m
 				for _,skids in pairs(main_face.skidmarks) do
 					local s_cache=setmetatable({m=v_cache.m,v=skids},v_cache_cls)
-					draw_quad(s_cache[1],s_cache[2],s_cache[3],s_cache[4],0)
+					draw_face(s_cache[1],s_cache[2],s_cache[3],s_cache[4],0)
 				end
 			end
 		end
@@ -1579,6 +1551,40 @@ function unpack_track(id)
 		model.ground[id]=#solid_faces>0 and solid_faces
 	end)
 	return model	
+end
+
+-->8
+-- edge rasterizer
+function polyfill(p,col)
+	color(col)
+	local p0,nodes=p[#p],{}
+	-- band vs. flr: -0.20%
+	local x0,y0=p0.x,p0.y
+
+	for i=1,#p do
+		local p1=p[i]
+		local x1,y1=p1.x,p1.y
+		-- backup before any swap
+		local _x1,_y1=x1,y1
+		if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+		-- exact slope
+		local dx=(x1-x0)/(y1-y0)
+		if(y0<-64) x0-=(y0+64)*dx y0=-64
+		-- subpixel shifting (after clipping)
+		local cy0=ceil(y0)
+		x0+=(cy0-y0)*dx
+		for y=cy0,min(ceil(y1)-1,63) do
+			local x=nodes[y]
+			if x then
+				rectfill(x,y,x0,y)
+			else
+				nodes[y]=x0
+			end
+			x0+=dx
+		end
+		-- next vertex
+		x0,y0=_x1,_y1
+	end
 end
 
 -->8

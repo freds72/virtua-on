@@ -191,7 +191,7 @@ function v_normz(v)
 		v[2]/=d
 		v[3]/=d
 	end
-	return d
+	return v
 end
 function v_dist(a,b)
 	local d=make_v(a,b)
@@ -210,7 +210,8 @@ function v2_cross(a,b)
 end
 
 function v2_ortho(a,scale)
-	return {-scale*a[1],0,scale*a[3]}
+	scale=scale or 1
+	return {-scale*a[3],0,scale*a[1]}
 end
 
 
@@ -358,29 +359,43 @@ function make_track(segments)
 	-- active index
 	local checkpoint=0
 	local function to_v(i)
-		local l=v_clone(segments[2*i+1])
-		v_add(l,segments[2*i+2])
-		v_scale(l,0.5)
-		return l
+		local l,r=segments[2*i+1],segments[2*i+2]
+		-- center
+		local c=v_clone(l)
+		v_add(c,r)
+		v_scale(c,0.5)
+		-- normal
+		return c,v_normz(v2_ortho(make_v(l,r))),l,r
 	end
 	return {	
 		-- returns next location
 		get_next=function(self)
 			return to_v(checkpoint)
 		end,
-		update=function(self,pos,dist)
-			local p=to_v(checkpoint)
-			if v_dist(pos,p)<dist then
-				checkpoint+=1
-				checkpoint%=n
+		get_current=function(self)
+			return to_v((checkpoint-1)%n)
+		end,
+		update=function(self,pos,dist,lookahead)
+			local p,pn=to_v(checkpoint+lookahead)
+			if v_dist(pos,p)<dist and v_dot(make_v(pos,p),pn)<0 then
+				checkpoint=(checkpoint+1+lookahead)%n
+				p=to_v(checkpoint)
 			end
-			return to_v(checkpoint)
+			return p
 		end,
 		draw=function(self)
+			local track_data=track_data
 			for i=1,#track_data,2 do
-				local x0,y0=cam:project(track_data[i])
-				local x1,y1=cam:project(track_data[i+1])
+				local l,r=track_data[i],track_data[i+1]
+				local x0,y0=cam:project(l)
+				local x1,y1=cam:project(r)
 				line(x0,y0,x1,y1,11)
+			
+				-- normal
+				local n=v_normz(v2_ortho(make_v(l,r)))
+				v_add(n,l)
+				local nx,ny=cam:project(n)
+				line(x0,y0,nx,ny,3)
 			end
 		end
 	}
@@ -508,8 +523,31 @@ function make_npc(p,angle,track)
 
 	local body_draw=body.draw
 	body.draw=function(self)
-		local x,y=cam:project(track:get_next())
+		local v1,n1,l1,r1=track:get_current()
+		local v2,n2,l2,r2=track:get_next()
+
+		local x,y=cam:project(v1)
+		circ(x,y,1,8)
+
+		local x,y=cam:project(v2)
 		circfill(x,y,1,8)
+
+		local d1=v_dot(make_v(self.pos,v1),n1)
+		local d2=v_dot(make_v(self.pos,v2),n2)
+		local d=d1/(d1-d2)
+
+		local ll=v_lerp(l1,l2,d)
+		local rr=v_lerp(r1,r2,d)
+
+		local lr=make_v(ll,rr)
+		local ll1=v_clone(ll)
+		v_add(ll1,lr,0)
+		local x,y=cam:project(ll1)
+		pset(x,y,8)
+		
+		v_add(ll,lr,1)
+		local x,y=cam:project(ll)
+		pset(x,y,2)	
 
 		body_draw(self)
 	end
@@ -530,7 +568,7 @@ function make_npc(p,angle,track)
 
 		local rpm=0.6
 		-- default: steer to track
-		local target=inv_apply(self,track:update(p,24))
+		local target=inv_apply(self,track:update(p,24,2))
 		local target_angle=atan2(target[1],target[3])
 
 		-- avoid collisions
@@ -541,8 +579,7 @@ function make_npc(p,angle,track)
 				-- todo: normz and check function?
 				-- in range?
 				if v_len(axis)<16 then
-					local axis_bck=v_clone(axis)
-					v_normz(axis)
+					local axis_bck=v_normz(v_clone(axis))
 					local relv=make_v(actor.get_velocity(),velocity)					
 					-- separating?
 					local sep=v_dot(axis,relv)
@@ -730,11 +767,11 @@ local static_track=make_track(track_data)
 function _init()
 	add(actors,plyr)
 
-	for i=1,4 do
+	for i=1,1 do
 		local npc_track=make_track(track_data)
 		local p=v_clone(npc_track:get_next())
-		p[1]+=(1-rnd(2))
-		p[3]+=(1-rnd(2))
+		--p[1]+=(1-rnd(2))
+		--p[3]+=(1-rnd(2))
 		add(actors,add(npcs, make_npc(p,0,npc_track)))
 	end
 end

@@ -11,7 +11,7 @@ function _init()
  razz={
 		--edge_rasterizer,
 		poly_rasterizer,
-		-- trifill_rasterizer,
+		trifill_rasterizer,
 		--hybrid_rasterizer,
 		convex_rasterizer
 	}
@@ -450,6 +450,17 @@ end
 function convex_rasterizer()
 	local poly={}
 	
+	local cache_cls={
+		__index=function(t,k)
+			local f=function(a)
+				t[k]=function(b)
+					rectfill(a,k,b,k)
+				end
+			end  
+			--t[k]=f
+			return f
+		end
+	}
 	return {
 	name="convex",
 	-- add edge
@@ -462,7 +473,7 @@ function convex_rasterizer()
 		local v=p.v
   		color(p.c)
 
-		local v0,nodes=v[#v],{}
+		local v0,nodes=v[#v],{} -- setmetatable({},cache_cls)
 		local x0,y0=v0[1],v0[2]
 		for i=1,#v do
 			local v1=v[i]
@@ -471,28 +482,22 @@ function convex_rasterizer()
 			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
 			local lines=ceil(y1)-ceil(y0)
 			if lines>0 then	
-				
 				local dx=(x1-x0)/(y1-y0)
 				if(y0<0) x0-=y0*dx y0=0
 				local subpix=ceil(y0)-y0
 				--assert(abs(subpix)<10,subpix.." ("..x0..","..y0..")-("..x1..","..y1..")")
-    local _x0,_y0=x0,y0
-				x0+=subpix*dx
-				local n=0
+    			x0+=subpix*dx
 				for y=ceil(y0),ceil(y1)-1 do
-					pset(x0,y,4)
+					-- nodes[y](x0)
+					local x=nodes[y]
+					if x then
+						rectfill(x,y,x0,y)
+					else
+						nodes[y]=x0
+					end
+					
 					x0+=dx
-					n+=1
 				end
-				--line(_x0,_y0,_x0-subpix,_y0,8)
-				--pset(x1,y1,11)
-				local s=subpix.." ("..n..")\n"
-				s=s.."(".._x0..",".._y0..")\n"
-				s=s.."("..x1..","..y1..")\n"
-				s=s..(_x0-subpix).."\n"
-				s=s..(_x0).."\n"
-				
-				--print(s,1*(_x0-64)+64,1*(_y0-64)+64+2,7)
 			end
 			--break
 			x0,y0=_x1,_y1
