@@ -309,7 +309,7 @@ function make_cam(scale)
 	}
 end
 
-local cam=make_cam(2)
+local cam=make_cam(6)
 function make_skidmarks()
 	local skidmarks={}
 	local t=0
@@ -529,17 +529,15 @@ function make_npc(p,angle,track)
 	body.draw=function(self)
 		local lookahead=rpm/0.6
 
-		local v1,n1,l1,r1=track:get_next(flr(4*lookahead))
-		local v2,n2,l2,r2=track:get_next(flr(4*lookahead)+1)
-		local tgt=v_clone(l2)
-		v_add(tgt,r2)
-		v_scale(tgt,0.5)
+		local v1,n1,l1,r1=track:get_next(flr(1*lookahead))
+		local v2,n2,l2,r2=track:get_next(flr(1*lookahead)+1)
+		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
+		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
 
 		local x,y=cam:project(tgt)
 		circfill(x,y,1,8)
 
 		--[[
-		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
 
 		
 
@@ -596,36 +594,53 @@ function make_npc(p,angle,track)
 		track:update(p,24)
 		]]
 
-		-- lookahead
 		local fwd=m_fwd(self.m)
-		-- force application point
-		local p=v_clone(self.pos)
-		v_add(p,fwd,3)
-
+		-- lookahead
 		-- curve: slow down
-		local lookahead=rpm/0.6
+		-- 5 ok
+		local lookahead=flr(2*rpm/0.6)
 
-		local v1,n1,l1,r1=track:get_next(flr(4*lookahead))
-		local v2,n2,l2,r2=track:get_next(flr(4*lookahead)+1)
-		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
+		--[[
+		local v1,n1,l1,r1=track:get_next(lookahead)
+		local v2,n2,l2,r2=track:get_next(lookahead+1)
+		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))		
+		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
 		if len1/len2<0.8 or len1/len2>1.2 then
-			rpm=0.2
+			-- clearing curve?
+			local v1,n1,l1,r1=track:get_next(lookahead+1)
+			local v2,n2,l2,r2=track:get_next(lookahead+2)
+			local curve=v_dot(fwd,v_normz(make_v(self.pos,v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8)))))
+			if curve>0.9 then
+				rpm+=0.1
+			else
+				rpm=max(0.2,rpm-0.1)
+			end
+		else
+			-- accelerate
+			rpm+=0.1
+		end
+		]]
+
+		local v1,n1,l1,r1=track:get_next(lookahead)
+		local v2,n2,l2,r2=track:get_next(lookahead+1)
+		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))		
+		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+		local curve=v_dot(fwd,v_normz(make_v(self.pos,v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8)))))
+		if curve<0.95 then
+			rpm=0.1
 		else
 			-- accelerate
 			rpm+=0.1
 		end
 		
 		-- default: steer to track
-		local tgt=v_clone(l2)
-		v_add(tgt,r2)
-		v_scale(tgt,0.5)
 		local target=inv_apply(self,tgt)
 		local target_angle=atan2(target[1],target[3])
 
 		-- shortest angle
 		if(target_angle<0.5) target_angle=1-target_angle
 		target_angle=0.75-target_angle
-		rpm=self:steer(target_angle,rpm)
+		rpm=self:steer(4*target_angle,rpm)
 	end
 	body.update=function(self)
 		body_update(self)
@@ -791,7 +806,7 @@ local static_track=make_track(track_data)
 function _init()
 	add(actors,plyr)
 
-	for i=1,12 do
+	for i=1,1 do
 		local npc_track=make_track(track_data,4*i)
 		if(not static_track) static_track=npc_track
 		local p=v_clone(npc_track:get_next(4*i))
