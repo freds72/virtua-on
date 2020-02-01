@@ -1,12 +1,6 @@
 pico-8 cartridge // http://www.pico-8.com
 version 18
 __lua__
--- track data
-local checkpoint_data={
-	12.8904,68.4766,1.7400,
-	32.6227,-38.1831,2.1600,
-	-23.3340,-48.8301,1.9200
-}
 
 local track_data={
 	{-25.13,0,-48.38},{-21.31,0,-48.38},
@@ -358,6 +352,11 @@ function make_track(segments,checkpoint)
 	local n=#segments/2
 	-- active index
 	checkpoint=checkpoint or 0
+	-- track coordinates
+	-- track_u: absolute distance on track
+	-- track_v: dot product on track segment
+	local track_u,track_v=checkpoint,0
+
 	local function to_v(i)
 		i=i%n
 		local l,r=segments[2*i+1],segments[2*i+2]
@@ -368,6 +367,7 @@ function make_track(segments,checkpoint)
 		-- normal
 		return c,v2_ortho(make_v(l,r)),l,r
 	end
+	local p0,n0,l0,r0=to_v(checkpoint)
 	return {	
 		-- returns any location after checkpoint
 		-- +1: next boundary
@@ -382,13 +382,50 @@ function make_track(segments,checkpoint)
 		get_chkpoint=function(self)
 			return checkpoint
 		end,
-		update=function(self,pos,dist)
+		update=function(self,pos,correct)
 			-- have we past end of current segment?
-			local p,pn,l,r=to_v(checkpoint+1)
-			if v_dot(make_v(l,pos),pn)>0 then
-				checkpoint=(checkpoint+1)%n
+			local p1,n1,l1,r1=to_v(checkpoint+1)
+			local d0,d1=v_dot(make_v(pos,p0),n0),v_dot(make_v(pos,p1),n1)
+			local d=d0/(d0-d1)
+			if d>1 then
+				checkpoint+=1
+				p0,n0,l0,r0=p1,n1,l1,r1
+				-- calculate new distance
+				p1,n1,l1,r1=to_v(checkpoint+1)
+				d0,d1=v_dot(make_v(pos,p0),n0),v_dot(make_v(pos,p1),n1)
+				d=d0/(d0-d1)
+			elseif d<0 then
+				-- going backward!!
+				checkpoint-=1
+				p1,n1,l1,r1=p0,n0,l0,r0
+				p0,n0,l0,r0=to_v(checkpoint)
+				-- calculate new distance
+				p1,n1,l1,r1=to_v(checkpoint+1)
+				d0,d1=v_dot(make_v(pos,p0),n0),v_dot(make_v(pos,p1),n1)
+				d=d0/(d0-d1)
 			end
-			return to_v(checkpoint)
+			track_u=checkpoint+(d%1)
+
+			local ll=v_lerp(l0,l1,d)
+			local rr=v_lerp(r0,r1,d)
+			
+			local v=make_v(ll,rr)
+			track_v=v_dot(v,make_v(ll,pos))/v_dot(v,v)
+			if correct then
+				if track_v>1 then
+					pos[1],pos[3]=rr[1],rr[3]
+				elseif track_v<0 then
+					pos[1],pos[3]=ll[1],ll[3]
+				end
+			end
+			return to_v(checkpoint),checkpoint
+		end,
+		-- mod: modulo or not
+		get_u=function(self,mod)
+			return mod and track_u%n or track_u
+		end,
+		get_v=function(self)
+			return track_v
 		end,
 		draw=function(self)
 			local track_data=track_data
@@ -397,33 +434,23 @@ function make_track(segments,checkpoint)
 				local x0,y0=cam:project(l)
 				local x1,y1=cam:project(r)
 				local k=(i-1)/2
-				color(checkpoint+1==k and 9 or 11)
+				color((checkpoint)%n==k and 9 or 11)
 				line(x0,y0,x1,y1)
 			end
 		end
 	}
 end
 
-function make_checkpoints(segments)
-	assert(#segments%3==0,"invalid number of track coordinates")
+function make_checkpoints(checkpoints,track)
 	-- active index
-	local checkpoint=0
-	local n=#segments/3
-	-- active index
-	local checkpoint=0
-	local function to_v(i)
-		return {segments[3*i+1],0,segments[3*i+2]},segments[3*i+3]
-	end
-
+	local checkpoint,n=0,#checkpoints
+	
 	-- previous laps
 	local laps={}
 
 	-- remaining time before game over (+ some buffer time)
 	local lap_t,remaining_t,best_t,best_i=0,30*30,32000,1
 	return {	
-		get_next=function(self)
-			return to_v(checkpoint)
-		end,
 		update=function(self,pos)
 			remaining_t-=1
 			if remaining_t==0 then
@@ -431,12 +458,13 @@ function make_checkpoints(segments)
 				return
 			end
 			lap_t+=1
-			local p,r=to_v(checkpoint)
-			if v_dist(pos,p)<r*r then
+			-- 
+			track:update(pos,true)
+			if track:get_u()>#laps*125+checkpoints[checkpoint+1] then
 				checkpoint+=1
 				remaining_t+=30*30
 				-- closed lap?
-				if checkpoint%n==0 then
+				if checkpoint==#checkpoints then
 					checkpoint=0
 					-- record time
 					add(laps,time_tostr(lap_t))
@@ -450,16 +478,16 @@ function make_checkpoints(segments)
 			end
 		end,
 		draw=function(self)
-			-- draw checkpoints
-			for i=0,n-1 do
-				local p,r=to_v(i)
-				r=cam:project_radius(r)
-				local x0,y0=cam:project(p)
-				circ(x0,y0,r,checkpoint==i and 10 or 1)
+			local u0,u1=flr(track:get_u()),#laps*125+checkpoints[checkpoint+1]
+			if u0==u1 then
+				local _,_,l,r=track:get_next()
+				local x0,y0=cam:project(l)
+				local x1,y1=cam:project(r)
+				line(x0,y0,x1,y1,8)
 			end
 
 			print("time",56,2,7)
-			print(ceil(remaining_t/30),60,10,10)
+			print(ceil(remaining_t/30).."\n"..u0..">"..u1.."\n"..checkpoint.."/"..#checkpoints,60,10,10)
 
 			print("lap time: ",96,2,7)
 			local y=8
@@ -492,7 +520,7 @@ function draw_debug_vectors()
 	end
 end
 
-function make_plyr(p,a)
+function make_plyr(p,a,track)
 	local rpm=0
 
 	local body=make_car(p,a)
@@ -568,7 +596,7 @@ function make_npc(p,angle,track)
 		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
 	
 		local x,y=cam:project(self.pos)
-		print(rpm.."\n"..(len1/len2),x+3,y,5)
+		print(rpm.."\n"..track:get_u(),x+3,y,5)
 
 		body_draw(self)
 	end
@@ -646,12 +674,10 @@ function make_npc(p,angle,track)
 		body_update(self)
 		-- update track segment
 		track:update(self.pos,24)
-		rpm*=0.97
+		rpm*=0.90
 	end
 	return body
 end
-
-local checkpoints=make_checkpoints(checkpoint_data)
 
 function make_car(p,angle)
 	local velocity,angularv={0,0,0},0
@@ -797,11 +823,14 @@ function make_car(p,angle)
 end
 
 
-local plyr--=make_plyr({-28,0,-33},0)
-
 -- only for display
 local static_track=make_track(track_data)
 -- local static_track
+
+local plyr_track=make_track(track_data,2)
+local checkpoints=make_checkpoints({48,90,125},plyr_track)
+
+local plyr=make_plyr(plyr_track:get_next(),0,plyr_track)
 
 function _init()
 	add(actors,plyr)
@@ -845,7 +874,7 @@ function _draw()
 
 	cam:track(plyr and plyr.pos or npcs[1].pos)
 
-	static_track:draw(npcs[1].pos)
+	plyr_track:draw()
 
 	skidmarks:draw()
 
@@ -858,6 +887,8 @@ function _draw()
 	checkpoints:draw()
 
 	if(plyr) print(plyr:get_speed().."km/h",2,2,7)
+	local v=plyr_track:get_v()
+	print(v,2,8,(v>=0 and v<=1) and 7 or 8)
 
 	local cpu=flr(1000*stat(1))/10
 	print(cpu.."%",2,118,2)
