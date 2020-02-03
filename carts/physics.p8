@@ -1,12 +1,6 @@
 pico-8 cartridge // http://www.pico-8.com
 version 18
 __lua__
--- track data
-local checkpoint_data={
-	12.8904,68.4766,1.7400,
-	32.6227,-38.1831,2.1600,
-	-23.3340,-48.8301,1.9200
-}
 
 local track_data={
 	{-25.13,0,-48.38},{-21.31,0,-48.38},
@@ -22,6 +16,7 @@ local track_data={
 	{-29.47,0,-8.97},{-21.31,0,-8.97},
 	{-29.08,0,-4.89},{-21.31,0,-4.89},
 	{-28.65,0,-0.77},{-21.31,0,-0.77},
+	{-28.65,0,-0.77},{-18.31,0,-0.77},
 	{-26.95,0,3.36},{-21.31,0,3.36},
 	{-25.31,0,7.41},{-21.43,0,7.41},
 	{-25.31,0,11.16},{-21.43,0,11.16},
@@ -191,7 +186,7 @@ function v_normz(v)
 		v[2]/=d
 		v[3]/=d
 	end
-	return d
+	return v
 end
 function v_dist(a,b)
 	local d=make_v(a,b)
@@ -210,7 +205,8 @@ function v2_cross(a,b)
 end
 
 function v2_ortho(a,scale)
-	return {-scale*a[1],0,scale*a[3]}
+	scale=scale or 1
+	return {-scale*a[3],0,scale*a[1]}
 end
 
 
@@ -308,7 +304,7 @@ function make_cam(scale)
 	}
 end
 
-local cam=make_cam(6)
+local cam=make_cam(12)
 function make_skidmarks()
 	local skidmarks={}
 	local t=0
@@ -349,76 +345,171 @@ function make_skidmarks()
 end
 local skidmarks=make_skidmarks()
 
-function make_track(segments)
-	-- "close" track
-	-- add(segments,segments[1])
-	-- add(segments,segments[2])
-	assert(#segments%2==0,"invalid number of track coordinates")
-	local n=#segments/2
+function make_track(segments,checkpoint)
+	local n=#segments/3
 	-- active index
-	local checkpoint=0
+	checkpoint=checkpoint or 0
+	-- track coordinates
+	-- track_u: absolute distance on track
+	-- track_v: dot product on track segment
+	local track_u,track_v=checkpoint,0
+
 	local function to_v(i)
-		local l=v_clone(segments[2*i+1])
-		v_add(l,segments[2*i+2])
-		v_scale(l,0.5)
-		return l
+		i=i%n
+		return segments[3*i+1],segments[3*i+2],segments[3*i+3]
 	end
+	-- starting quad
+	local n0,l0,r0=to_v(checkpoint)
+	local n1,l1,r1=to_v(checkpoint+1)
+	local prev_pos
+	local function next()
+		checkpoint+=1
+		n0,l0,r0=n1,l1,r1
+		n1,l1,r1=to_v(checkpoint+1)	
+		-- 'flat segment'
+		if (abs(v_dot(make_v(l0,l1),n0))<0.001 or abs(v_dot(make_v(l0,r1),n0))<0.001) next()
+	end
+	local function prev()
+		-- going backward!!
+		checkpoint-=1
+		n1,l1,r1=n0,l0,r0
+		n0,l0,r0=to_v(checkpoint)
+		-- 'flat segment'
+		if (abs(v_dot(make_v(l0,l1),n0))<0.001 or abs(v_dot(make_v(l0,r1),n0))<0.001) prev()
+	end
+	local function get_d(pos)
+		local d0=v_dot(make_v(pos,l0),n0)
+		return d0/(d0-v_dot(make_v(pos,l1),n1))
+	end
+
+	local function draw_border(offset)
+		local segments=segments
+		local t0=segments[#segments+offset-1]
+		local x0,y0=cam:project(t0)
+		for i=1,#segments,3 do
+			local t1=segments[i+offset+1]
+			local x1,y1=cam:project(t1)
+			local k=(i-1)/3
+			color((checkpoint+1)%n==k and 9 or 11)
+			line(x0,y0,x1,y1)
+			x0,y0=x1,y1
+		end
+	end
+
 	return {	
-		-- returns next location
-		get_next=function(self)
+		-- returns any location after checkpoint
+		-- +1: next boundary
+		get_next=function(self,offset)
+			offset=offset or 0
+			return to_v(checkpoint+offset)
+		end,
+		-- current track segment
+		get_current=function(self)
 			return to_v(checkpoint)
 		end,
-		update=function(self,pos,dist)
-			local p=to_v(checkpoint)
-			if v_dist(pos,p)<dist then
-				checkpoint+=1
-				checkpoint%=n
+		get_chkpoint=function(self)
+			return checkpoint
+		end,
+		update=function(self,pos,fwd,correct)
+			-- have we past end of current segment?
+			local d,segment=get_d(pos),checkpoint
+			local forward
+			if d>1 then
+				next()
+				forward=true
+			elseif d<0 then
+				prev()
 			end
-			return to_v(checkpoint)
+			-- refresh d
+			d=get_d(pos)
+			track_u=checkpoint+(d%1)
+
+			if correct then
+				local ll,rr=v_lerp(l0,l1,d),v_lerp(r0,r1,d)
+				local v=make_v(ll,rr)
+				track_v=v_dot(v,make_v(ll,pos))/v_dot(v,v)
+				-- invalid position & discontinuity
+				if (track_v<0 or track_v>1) and abs(segment-checkpoint)>1 then
+					-- back to 'safe' place
+					local n,l,r
+					if forward then
+						prev()
+						n,l,r=n1,l1,r1
+					else
+						next()
+						n,l,r=n0,l0,r0
+					end
+					-- line intersection
+					local t=-v_dot(make_v(l,prev_pos),n)/v_dot(fwd,n)
+					local fixed_pos=v_clone(prev_pos)
+					v_add(fixed_pos,fwd,0.95*t)
+					pos[1],pos[3]=fixed_pos[1],fixed_pos[3]
+
+					-- side pos
+					d=get_d(pos)
+					local ll,rr=v_lerp(l0,l1,d),v_lerp(r0,r1,d)			
+					local v=make_v(ll,rr)
+					track_v=v_dot(v,make_v(ll,pos))/v_dot(v,v)
+				end
+				-- keep within track
+				if track_v>1 then
+					pos[1],pos[3]=rr[1],rr[3]
+				elseif track_v<0 then
+					pos[1],pos[3]=ll[1],ll[3]
+				end
+				-- for collision
+				prev_pos=pos
+			end
+
+			-- refresh d
+			d=get_d(pos)
+			track_u=checkpoint+(d%1)
+			
+			return to_v(checkpoint),checkpoint
+		end,
+		-- mod: modulo or not
+		get_u=function(self,mod)
+			return mod and track_u%n or track_u
+		end,
+		get_v=function(self)
+			return track_v
 		end,
 		draw=function(self)
-			for i=1,#track_data,2 do
-				local x0,y0=cam:project(track_data[i])
-				local x1,y1=cam:project(track_data[i+1])
-				line(x0,y0,x1,y1,11)
+			draw_border(0)
+			draw_border(1)
+
+			if prev_pos then
+				local x0,y0=cam:project(prev_pos)
+				circfill(x0,y0,2,11)
 			end
 		end
 	}
 end
 
-function make_checkpoints(segments)
-	assert(#segments%3==0,"invalid number of track coordinates")
+function make_checkpoints(checkpoints,track)
 	-- active index
-	local checkpoint=0
-	local n=#segments/3
-	-- active index
-	local checkpoint=0
-	local function to_v(i)
-		return {segments[3*i+1],0,segments[3*i+2]},segments[3*i+3]
-	end
-
+	local checkpoint,n=0,#checkpoints
+	
 	-- previous laps
 	local laps={}
 
 	-- remaining time before game over (+ some buffer time)
 	local lap_t,remaining_t,best_t,best_i=0,30*30,32000,1
 	return {	
-		get_next=function(self)
-			return to_v(checkpoint)
-		end,
-		update=function(self,pos)
+		update=function(self,pos,fwd)
 			remaining_t-=1
 			if remaining_t==0 then
 				-- next_state(gameover_state)
 				return
 			end
 			lap_t+=1
-			local p,r=to_v(checkpoint)
-			if v_dist(pos,p)<r*r then
+			-- 
+			track:update(pos,fwd,true)
+			if track:get_u()>#laps*125+checkpoints[checkpoint+1] then
 				checkpoint+=1
 				remaining_t+=30*30
 				-- closed lap?
-				if checkpoint%n==0 then
+				if checkpoint==#checkpoints then
 					checkpoint=0
 					-- record time
 					add(laps,time_tostr(lap_t))
@@ -432,16 +523,16 @@ function make_checkpoints(segments)
 			end
 		end,
 		draw=function(self)
-			-- draw checkpoints
-			for i=0,n-1 do
-				local p,r=to_v(i)
-				r=cam:project_radius(r)
-				local x0,y0=cam:project(p)
-				circ(x0,y0,r,checkpoint==i and 10 or 1)
+			local u0,u1=flr(track:get_u()),#laps*125+checkpoints[checkpoint+1]
+			if u0==u1 then
+				local _,_,l,r=track:get_next()
+				local x0,y0=cam:project(l)
+				local x1,y1=cam:project(r)
+				line(x0,y0,x1,y1,8)
 			end
 
 			print("time",56,2,7)
-			print(ceil(remaining_t/30),60,10,10)
+			print(ceil(remaining_t/30).."\n"..u0..">"..u1.."\n"..checkpoint.."/"..#checkpoints,60,10,10)
 
 			print("lap time: ",96,2,7)
 			local y=8
@@ -474,7 +565,7 @@ function draw_debug_vectors()
 	end
 end
 
-function make_plyr(p,a)
+function make_plyr(p,a,track)
 	local rpm=0
 
 	local body=make_car(p,a)
@@ -505,11 +596,24 @@ local actors={}
 
 function make_npc(p,angle,track)	
 	local body=make_car(p,angle)
+	local rpm=0.6
 
-	local body_draw=body.draw
+	local body_draw,body_update=body.draw,body.update
 	body.draw=function(self)
-		local x,y=cam:project(track:get_next())
+		local lookahead=rpm/0.6
+
+		local n1,l1,r1=track:get_next(flr(1*lookahead))
+		local n2,l2,r2=track:get_next(flr(1*lookahead)+1)
+		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
+		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+
+		local x,y=cam:project(tgt)
 		circfill(x,y,1,8)
+
+		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
+	
+		local x,y=cam:project(self.pos)
+		print(rpm.."\n"..track:get_u(),x+3,y,5)
 
 		body_draw(self)
 	end
@@ -522,61 +626,75 @@ function make_npc(p,angle,track)
 	end
 
 	body.control=function(self)
-		-- lookahead
+		--[[
+		local dx,dy=0,0
+		if (btn(0)) dx=-1
+		if (btn(1)) dx=1
+		if (btn(2)) dy=1
+		if (btn(3)) dy=-1
+		local p=self.pos
+		p[1]+=dx/4
+		p[3]+=dy/4
+
+		track:update(p,24)
+		]]
+
 		local fwd=m_fwd(self.m)
-		-- force application point
-		local p=v_clone(self.pos)
-		v_add(p,fwd,3)
+		-- lookahead
+		-- curve: slow down
+		-- 5 ok
+		local lookahead=flr(2*rpm/0.6)
 
-		local rpm=0.6
-		-- default: steer to track
-		local target=inv_apply(self,track:update(p,24))
-		local target_angle=atan2(target[1],target[3])
-
-		-- avoid collisions
-		local velocity=self.get_velocity()
-		for _,actor in pairs(actors) do
-			if actor!=self then
-				local axis=make_v(actor.pos,self.pos)
-				-- todo: normz and check function?
-				-- in range?
-				if v_len(axis)<16 then
-					local axis_bck=v_clone(axis)
-					v_normz(axis)
-					local relv=make_v(actor.get_velocity(),velocity)					
-					-- separating?
-					local sep=v_dot(axis,relv)
-					if sep<0 then
-						add(debug_vectors,{f=axis_bck,p=self.pos,c=4,scale=sep})
-
-						local local_pos=inv_apply(self,actor.pos)
-						-- in front?
-						-- in path?
-						if local_pos[3]>0 and abs(local_pos[1])<2 then							
-							local x=local_pos[1]
-							local escape_axis=v2_ortho(axis,1)
-							local_pos[1]+=1/v_dot(relv,escape_axis)
-							target_angle=atan2(local_pos[1],local_pos[3])
-							rpm/=2
-
-							add(debug_vectors,{f=make_v(self.pos,self:apply(local_pos)),p=self.pos,c=8,scale=target_angle})
-							break
-						end
-					end
-				end
+		--[[
+		local v1,n1,l1,r1=track:get_next(lookahead)
+		local v2,n2,l2,r2=track:get_next(lookahead+1)
+		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))		
+		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+		if len1/len2<0.8 or len1/len2>1.2 then
+			-- clearing curve?
+			local v1,n1,l1,r1=track:get_next(lookahead+1)
+			local v2,n2,l2,r2=track:get_next(lookahead+2)
+			local curve=v_dot(fwd,v_normz(make_v(self.pos,v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8)))))
+			if curve>0.9 then
+				rpm+=0.1
+			else
+				rpm=max(0.2,rpm-0.1)
 			end
+		else
+			-- accelerate
+			rpm+=0.1
+		end
+		]]
+
+		local n1,l1,r1=track:get_next(lookahead)
+		local n2,l2,r2=track:get_next(lookahead+1)
+		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))		
+		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+		local curve=v_dot(fwd,v_normz(make_v(self.pos,v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8)))))
+		if curve<0.95 then
+			rpm=0.1
+		else
+			-- accelerate
+			rpm+=0.1
 		end
 		
+		-- default: steer to track
+		local target=inv_apply(self,tgt)
+		local target_angle=atan2(target[1],target[3])
+
 		-- shortest angle
 		if(target_angle<0.5) target_angle=1-target_angle
 		target_angle=0.75-target_angle
-		self:steer(target_angle,rpm*lerp(1,0.5,min(abs(target_angle)/0.17,1)))
-
+		rpm=self:steer(4*target_angle,rpm)
+	end
+	body.update=function(self)
+		body_update(self)
+		-- update track segment
+		track:update(self.pos,24)
+		rpm*=0.90
 	end
 	return body
 end
-
-local checkpoints=make_checkpoints(checkpoint_data)
 
 function make_car(p,angle)
 	local velocity,angularv={0,0,0},0
@@ -674,7 +792,7 @@ function make_car(p,angle)
 		end,
 		steer=function(self,steering_dt,rpm)
 			is_braking=rpm<0
-			steering_angle+=mid(steering_dt,-0.1,0.1)
+			steering_angle+=mid(steering_dt,-0.2,0.2)
 
 			-- longitudinal slip ratio
 			local right=m_right(self.m)
@@ -722,19 +840,46 @@ function make_car(p,angle)
 end
 
 
-local plyr=make_plyr({-28,0,-33},0)
-
 -- only for display
-local static_track=make_track(track_data)
+local static_track
+-- local static_track
+
+local plyr_track
+local checkpoints
+
+local plyr
 
 function _init()
+	local fixed_tracks={}
+	-- caclulate normals
+	for i=1,#track_data,2 do
+		local l0,r0=track_data[i],track_data[i+1]
+		add(fixed_tracks,v_normz(v2_ortho(make_v(l0,r0))))
+		add(fixed_tracks,l0)
+		add(fixed_tracks,r0)
+	end
+	
+	-- only for display
+	static_track=make_track(fixed_tracks)
+	-- local static_track
+
+	plyr_track=make_track(fixed_tracks,2)
+	checkpoints=make_checkpoints({48,90,125},plyr_track)
+
+	local n,l,r=plyr_track:get_next()
+	l=v_clone(l)
+	v_add(l,r)
+	v_scale(l,0.5)
+	plyr=make_plyr(l,0,plyr_track)
+
 	add(actors,plyr)
 
-	for i=1,4 do
-		local npc_track=make_track(track_data)
-		local p=v_clone(npc_track:get_next())
-		p[1]+=(1-rnd(2))
-		p[3]+=(1-rnd(2))
+	for i=1,1 do
+		local npc_track=make_track(fixed_tracks,4*i)
+		if(not static_track) static_track=npc_track
+		local p=v_clone(npc_track:get_next(4*i))
+		--p[1]+=(1-rnd(2))
+		--p[3]+=(1-rnd(2))
 		add(actors,add(npcs, make_npc(p,0,npc_track)))
 	end
 end
@@ -748,7 +893,7 @@ function _update()
 		plyr:integrate()	
 		plyr:update()
 
-		checkpoints:update(plyr.pos)
+		checkpoints:update(plyr.pos,m_fwd(plyr.m))
 	end
 
 	for _,npc in pairs(npcs) do
@@ -768,7 +913,7 @@ function _draw()
 
 	cam:track(plyr and plyr.pos or npcs[1].pos)
 
-	static_track:draw()
+	plyr_track:draw()
 
 	skidmarks:draw()
 
@@ -781,6 +926,8 @@ function _draw()
 	checkpoints:draw()
 
 	if(plyr) print(plyr:get_speed().."km/h",2,2,7)
+	local v=plyr_track:get_v()
+	print(v,2,8,(v>=0 and v<=1) and 7 or 8)
 
 	local cpu=flr(1000*stat(1))/10
 	print(cpu.."%",2,118,2)

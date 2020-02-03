@@ -402,8 +402,12 @@ track_data = ""
 
 # background map ID (custom scene property)
 map_id = scene.get("id", 0)
-print("map id:{}".format(map_id))
 track_data += "{:02x}".format(int(round(map_id,0)))
+
+# horiz + sky color
+horiz_color = diffuse_to_p8color(scene.world.horizon_color)
+sky_color = diffuse_to_p8color(scene.world.zenith_color)
+track_data += "{:02x}".format(sky_color*16+horiz_color)
 
 # export start position
 # note: direction is always fwd

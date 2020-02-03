@@ -457,6 +457,17 @@ end
 function convex_rasterizer()
 	local poly={}
 	
+	local cache_cls={
+		__index=function(t,k)
+			local f=function(a)
+				t[k]=function(b)
+					rectfill(a,k,b,k)
+				end
+			end  
+			--t[k]=f
+			return f
+		end
+	}
 	return {
 	name="edge+sub-pix",
 	-- add edge
@@ -469,7 +480,7 @@ function convex_rasterizer()
 		local v=p.v
   		color(p.c)
 
-		local v0,nodes=v[#v],{}
+		local v0,nodes=v[#v],{} -- setmetatable({},cache_cls)
 		local x0,y0=v0[1],v0[2]
 		for i=1,#v do
 			local v1=v[i]
