@@ -10,8 +10,8 @@ local razz
 function _init()
  razz={
 		--edge_rasterizer,
-		poly_rasterizer,
-		-- trifill_rasterizer,
+		--poly_rasterizer,
+		trifill_rasterizer,
 		--hybrid_rasterizer,
 		convex_rasterizer
 	}
@@ -22,6 +22,13 @@ function _init()
 end
 
 local angle=0
+local colors={
+1 ,1 ,14,1, 1,
+1 ,15,7 ,13,1,
+2 ,7 ,7 ,7, 12,
+1 ,9 ,7 ,11,1,
+1 ,1 ,10,1, 1}
+
 function _update() 
 	
 	if btnp(4) then
@@ -29,27 +36,27 @@ function _update()
 	 raz=razz[mode+1]()
 	end
 	 
-	angle+=0.001
+	angle+=1/(30*8)
 	local cc,ss=cos(angle),-sin(angle)
-	local scale=1
+	local scale=15
 	local function rotate(x,y)
-		x-=64
-		y-=40
+		x-=2
+		y-=2
 		return 64+scale*(x*ss-y*cc),64+scale*(x*cc+y*ss)
 	end
-	for i=1,1 do
-		cc,ss=cos(angle+0.23*i),-sin(angle+0.23*i)
-		local x0,y0=rotate(24,24)
-		local x1,y1=rotate(96,24)
-		local x2,y2=rotate(96,112)
-		local x3,y3=rotate(24,112)
-		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},1+i%13,i)
+	for i=0,15 do
+		local x,y=i%4,flr(i/4)
+		local x0,y0=rotate(x,y)
+		local x1,y1=rotate(x+1,y)
+		local x2,y2=rotate(x+1,y+1)
+		local x3,y3=rotate(x,y+1)
+		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},i,i)
  end
  
 end
 
 function _draw()
- cls()
+ cls(6)
  raz:draw()
  local cpu=flr(1000*stat(1))/10
  rectfill(0,0,127,6,8)
@@ -451,7 +458,7 @@ function convex_rasterizer()
 	local poly={}
 	
 	return {
-	name="convex",
+	name="edge+sub-pix",
 	-- add edge
 	add=function(self,verts,c,z)
 		add(poly,{v=verts,c=c})
@@ -469,31 +476,18 @@ function convex_rasterizer()
 			local x1,y1=v1[1],v1[2]
 			local _x1,_y1=x1,y1
 			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-			local lines=ceil(y1)-ceil(y0)
-			if lines>0 then	
-				
-				local dx=(x1-x0)/(y1-y0)
-				if(y0<0) x0-=y0*dx y0=0
-				local subpix=ceil(y0)-y0
-				--assert(abs(subpix)<10,subpix.." ("..x0..","..y0..")-("..x1..","..y1..")")
-    local _x0,_y0=x0,y0
-				x0+=subpix*dx
-				local n=0
-				for y=ceil(y0),ceil(y1)-1 do
-					pset(x0,y,4)
-					x0+=dx
-					n+=1
+			local cy0,cy1,dx=ceil(y0),ceil(y1),(x1-x0)/(y1-y0)
+			if(y0<0) x0-=y0*dx y0=0
+   			x0+=(cy0-y0)*dx
+			for y=cy0,min(cy1-1,127) do
+				local x=nodes[y]
+				if x then
+				 rectfill(x,y,x0,y)
+				else
+				 nodes[y]=x0
 				end
-				--line(_x0,_y0,_x0-subpix,_y0,8)
-				--pset(x1,y1,11)
-				local s=subpix.." ("..n..")\n"
-				s=s.."(".._x0..",".._y0..")\n"
-				s=s.."("..x1..","..y1..")\n"
-				s=s..(_x0-subpix).."\n"
-				s=s..(_x0).."\n"
-				
-				--print(s,1*(_x0-64)+64,1*(_y0-64)+64+2,7)
-			end
+				x0+=dx					
+			end			
 			--break
 			x0,y0=_x1,_y1
 		end
