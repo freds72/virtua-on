@@ -304,7 +304,7 @@ function make_cam(scale)
 	}
 end
 
-local cam=make_cam(12)
+local cam=make_cam(6)
 function make_skidmarks()
 	local skidmarks={}
 	local t=0
@@ -397,18 +397,12 @@ function make_track(segments,checkpoint)
 	end
 
 	return {	
-		-- returns any location after checkpoint
+		-- returns location after checkpoint
+		-- 0: current checkpoint
 		-- +1: next boundary
 		get_next=function(self,offset)
 			offset=offset or 0
 			return to_v(checkpoint+offset)
-		end,
-		-- current track segment
-		get_current=function(self)
-			return to_v(checkpoint)
-		end,
-		get_chkpoint=function(self)
-			return checkpoint
 		end,
 		update=function(self,pos,fwd,correct)
 			-- have we past end of current segment?
@@ -503,8 +497,6 @@ function make_checkpoints(checkpoints,track)
 				return
 			end
 			lap_t+=1
-			-- 
-			track:update(pos,fwd,true)
 			if track:get_u()>#laps*125+checkpoints[checkpoint+1] then
 				checkpoint+=1
 				remaining_t+=30*30
@@ -525,7 +517,7 @@ function make_checkpoints(checkpoints,track)
 		draw=function(self)
 			local u0,u1=flr(track:get_u()),#laps*125+checkpoints[checkpoint+1]
 			if u0==u1 then
-				local _,_,l,r=track:get_next()
+				local _,l,r=track:get_next()
 				local x0,y0=cam:project(l)
 				local x1,y1=cam:project(r)
 				line(x0,y0,x1,y1,8)
@@ -568,7 +560,7 @@ end
 function make_plyr(p,a,track)
 	local rpm=0
 
-	local body=make_car(p,a)
+	local body=make_car(p,a,track,true)
 	
 	body.control=function(self)	
 		local da=0
@@ -582,9 +574,9 @@ function make_plyr(p,a,track)
 
 		rpm=self:steer(da/8,rpm)
 	end
-	local body_update=body.update
+	local _update=body.update
 	body.update=function(self)
-		body_update(self)
+		_update(self)
 		rpm*=0.97		
 	end
 	-- wrapper
@@ -595,7 +587,7 @@ local npcs={}
 local actors={}
 
 function make_npc(p,angle,track)	
-	local body=make_car(p,angle)
+	local body=make_car(p,angle,track)
 	local rpm=0.6
 
 	local body_draw,body_update=body.draw,body.update
@@ -645,42 +637,57 @@ function make_npc(p,angle,track)
 		-- 5 ok
 		local lookahead=flr(2*rpm/0.6)
 
-		--[[
-		local v1,n1,l1,r1=track:get_next(lookahead)
-		local v2,n2,l2,r2=track:get_next(lookahead+1)
-		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))		
-		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
-		if len1/len2<0.8 or len1/len2>1.2 then
-			-- clearing curve?
-			local v1,n1,l1,r1=track:get_next(lookahead+1)
-			local v2,n2,l2,r2=track:get_next(lookahead+2)
-			local curve=v_dot(fwd,v_normz(make_v(self.pos,v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8)))))
-			if curve>0.9 then
-				rpm+=0.1
-			else
-				rpm=max(0.2,rpm-0.1)
-			end
-		else
-			-- accelerate
-			rpm+=0.1
-		end
-		]]
-
 		local n1,l1,r1=track:get_next(lookahead)
 		local n2,l2,r2=track:get_next(lookahead+1)
-		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))		
+		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
+		-- find track target point based on curvature		
 		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
 		local curve=v_dot(fwd,v_normz(make_v(self.pos,v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8)))))
 		if curve<0.95 then
-			rpm=0.1
+			rpm=max(0.1,rpm-0.01)
 		else
 			-- accelerate
-			rpm+=0.1
+			rpm+=0.05
 		end
 		
 		-- default: steer to track
 		local target=inv_apply(self,tgt)
 		local target_angle=atan2(target[1],target[3])
+
+		-- avoid collisions
+		--[[
+		local velocity=self.get_velocity()
+		for _,actor in pairs(actors) do
+			if actor!=self then
+				local axis=make_v(actor.pos,self.pos)
+				-- todo: normz and check function?
+				-- in range?
+				if v_len(axis)<16 then
+					local axis_bck=v_clone(axis)
+					v_normz(axis)
+					local relv=make_v(actor.get_velocity(),velocity)					
+					-- separating?
+					local sep=v_dot(axis,relv)
+					if sep<0 then
+						add(debug_vectors,{f=axis_bck,p=self.pos,c=4,scale=sep})
+
+						local local_pos=inv_apply(self,actor.pos)
+						-- in front?
+						-- in path?
+						if local_pos[3]>0 and abs(local_pos[1])<2 then
+							local escape_axis=v2_ortho(axis,1)
+							local_pos[1]+=1/v_dot(relv,escape_axis)
+							target_angle=atan2(local_pos[1],local_pos[3])
+							rpm=max(0.1,rpm-0.01)
+
+							add(debug_vectors,{f=make_v(self.pos,self:apply(local_pos)),p=self.pos,c=8,scale=target_angle})
+							break
+						end
+					end
+				end
+			end
+		end
+		]]
 
 		-- shortest angle
 		if(target_angle<0.5) target_angle=1-target_angle
@@ -689,14 +696,12 @@ function make_npc(p,angle,track)
 	end
 	body.update=function(self)
 		body_update(self)
-		-- update track segment
-		track:update(self.pos,24)
-		rpm*=0.90
+		rpm*=0.97
 	end
 	return body
 end
 
-function make_car(p,angle)
+function make_car(p,angle,track,fix_pos)
 	local velocity,angularv={0,0,0},0
 	local forces,torque={0,0,0},0
 
@@ -740,24 +745,6 @@ function make_car(p,angle)
 				line(x0,y0,x1,y1)
 				x0,y0=x1,y1			
 			end
-
-			-- target in local space
-			--[[
-			local target=make_v(self.pos,checkpoints:get_next())
-			local x,y,z=target[1],target[2],target[3]
-			local m=self.m
-			target={m[1]*x+m[2]*y+m[3]*z,m[4]*x+m[5]*y+m[6]*z,m[7]*x+m[8]*y+m[9]*z}
-			x0,y0=cam:project(checkpoints:get_next())			
-			local target_angle=atan2(target[1],target[3])
-			print(target_angle,x0+3,y0,2)
-			target_angle+=angle
-			target={cos(target_angle),0,sin(target_angle)}
-			v_add(target,self.pos)
-			x0,y0=cam:project(self.pos)
-			local x1,y1=cam:project(target)
-			line(x0,y0,x1,y1,8)
-			]]
-
 		end,		
 		apply_force_and_torque=function(self,f,t)
 			-- add(debug_vectors,{f=f,p=p,c=11,scale=t})
@@ -835,6 +822,8 @@ function make_car(p,angle)
 		end,
 		update=function(self)
 			steering_angle*=0.8
+			-- correct position
+			track:update(self.pos,m_fwd(self.m),fix_pos)
 		end
 	}	
 end
@@ -874,13 +863,16 @@ function _init()
 
 	add(actors,plyr)
 
-	for i=1,1 do
+	for i=1,8 do
 		local npc_track=make_track(fixed_tracks,4*i)
 		if(not static_track) static_track=npc_track
-		local p=v_clone(npc_track:get_next(4*i))
+		local _,l,r=npc_track:get_next()
+		l=v_clone(l)
+		v_add(l,r)
+		v_scale(l,0.5)
 		--p[1]+=(1-rnd(2))
 		--p[3]+=(1-rnd(2))
-		add(actors,add(npcs, make_npc(p,0,npc_track)))
+		add(actors,add(npcs, make_npc(l,0,npc_track)))
 	end
 end
 
@@ -893,7 +885,7 @@ function _update()
 		plyr:integrate()	
 		plyr:update()
 
-		checkpoints:update(plyr.pos,m_fwd(plyr.m))
+		checkpoints:update()
 	end
 
 	for _,npc in pairs(npcs) do
