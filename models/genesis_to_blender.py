@@ -13,14 +13,24 @@ def makeMaterial(name, diffuse, culling):
     return mat
  
 
-# mem_offset = 0x00138200 # Track 1 (Genesis) - 130 segments
-# mem_offset = 0x0014c200 # Track 2 (Genesis) - 130
-# mem_offset = 0x00164298 # Track 3 (Genesis) - 167 
+models = {
+    "big_forest": {
+        "offset": 0x00138200,
+        "segments": 127},
+    "ocean": {
+        "offset": 0x0014c200,
+        "segments": 127
+    },
+    "acropolis": {
+        "offset": 0x00164298,
+        "segments": 167
+    }
+}
 # mem_offset = 0x0014c200
 # mem_offset = 0x00108000
 # mem_offset = 0xa000 # start of poly data (32x)
 # mem_offset = 0x10e490 # car data (+ LOD) - to be fixed
-mem_offset   = 0x12bd7c # car read tires
+# mem_offset   = 0x12bd7c # car read tires
 
 # clear materials
 for material in bpy.data.materials:
@@ -43,9 +53,10 @@ bpy.context.scene.objects.link(ob)
 bm = bmesh.new()   # create an empty BMesh
 bm.from_mesh(me)   # fill it in from a Mesh
  
+model = models["ocean"]
 with open(os.path.join("C:\\Users\\Frederic\\Source\\Repos\\virtua-on\\models","Virtua Racing (USA).md"), 'rb') as rom_file:
-    rom_file.seek(mem_offset)
-    for o in range(1):
+    rom_file.seek(model["offset"])
+    for o in range(model["segments"]):
         # format: http://forums.sonicretro.org/index.php?showtopic=38296
         unknown_flag = rom_file.read(1)
         # number of faces
@@ -56,7 +67,12 @@ with open(os.path.join("C:\\Users\\Frederic\\Source\\Repos\\virtua-on\\models","
             # face flags
             face_flags = rom_file.read(1)[0]
             # get/create material
-            mat_name = "{:02x}{}".format(face_colors & 0xff,"_dual" if 0x40 & face_flags==0 else "")
+            # 0x80: (order?)
+            # 0x40: dual sided
+            # 0x20: dithering
+            # 0x10: tri/quad
+            # render order: face_flags & 0xf
+            mat_name = "{0:b}".format(face_flags)
             mat_index = -1
             mat = ob.data.materials.get(mat_name)
             if mat!=None:
