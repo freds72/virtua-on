@@ -648,15 +648,16 @@ function make_car(model,p,angle)
 							local sep=v_dot(axis,relv)
 							if sep<0 then							
 								add(debug_vectors,{f=axis,p=pos,c=4,scale=(0.5-depth)/0.5})
-								-- silly torque - to fix
+								-- silly sacle - to fix
 								v_scale(axis,5)
-								self:apply_force_and_torque(axis,-depth*v2_cross({0,0,offset},axis)/0.5)
+								-- silly torque - to fix
+								self:apply_force_and_torque(axis,-2*depth*v2_cross({0,0,offset},axis))
 							end
 						end
 					end
 				end
 			end
-		end,	
+		end,
 		update=function(self)
 			steering_angle*=0.8
 
