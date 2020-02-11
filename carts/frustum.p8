@@ -352,7 +352,7 @@ function make_cam()
 		update=function(self)
 			if switching_async then
 				switching_async=corun(switching_async)
-			elseif btn(4) then
+			elseif btn(3) then
 				local next_mode=(view_mode+1)%#view_pov
 				local next_pov=view_pov[next_mode+1]
 				local next_pov_z,next_pov_y,next_pov_lag,next_znear,next_dist=next_pov.z,next_pov.y,next_pov.lag,next_pov.znear,next_pov.dist
@@ -512,7 +512,6 @@ function make_car(model,p,angle)
 	local is_braking=false
 	local max_rpm=0.6
 	local steering_angle=0
-	local sliding_t=0
 
 	local total_r=0
 	
@@ -527,6 +526,7 @@ function make_car(model,p,angle)
 		lrw=skidmarks:make_emitter()
 	}
 
+	local full_slide,rear_slide
 	local do_skidmarks=function(self,emitters)
 		-- no 3d model?
 		if(not model) return
@@ -543,9 +543,6 @@ function make_car(model,p,angle)
 	return {
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
-		get_sliding_t=function(self)
-			return sliding_t
-		end,
 		get_pos=function(self)
 	 		return self.pos,angle
 		end,
@@ -587,6 +584,14 @@ function make_car(model,p,angle)
 
 			-- reset
 			forces,torque={0,0,0},0
+
+			-- skidmarks
+			if full_slide==true then
+				do_skidmarks(self,front_emitters)
+				do_skidmarks(self,rear_emitters)
+			elseif rear_slide==true then
+				do_skidmarks(self,rear_emitters)
+			end
 		end,
 		get_speed=function(self)
 			return 300*3.6*(v_dot(velocity,velocity)^0.5)
@@ -598,16 +603,8 @@ function make_car(model,p,angle)
 			-- longitudinal slip ratio
 			local right=m_right(self.m)
 			local sr=v_dot(right,velocity)
-			local full_slide
-			if abs(sr)>0.12 then
-				sliding_t+=1
-				full_slide=true
-				do_skidmarks(self,front_emitters)
-				do_skidmarks(self,rear_emitters)
-			else
-				-- not sliding
-				sliding_t=0
-			end
+			full_slide=abs(sr)>0.12 
+
 			-- max "grip"
 			sr=mid(sr,-0.10,0.10)
 			sr=1-abs(sr)/0.40
@@ -625,9 +622,7 @@ function make_car(model,p,angle)
 			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
 
 			-- rear wheels sliding?
-			if not full_slide and rps>10 and effective_rps/rps<0.6 then
-				do_skidmarks(self,rear_emitters)
-			end
+			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6		
 
 			return min(rpm,max_rpm)
 		end,
@@ -647,7 +642,7 @@ function make_car(model,p,angle)
 							-- separating?
 							local sep=v_dot(axis,relv)
 							if sep<0 then							
-								add(debug_vectors,{f=axis,p=pos,c=4,scale=(0.5-depth)/0.5})
+								-- add(debug_vectors,{f=axis,p=pos,c=4,scale=(0.5-depth)/0.5})
 								-- silly sacle - to fix
 								v_scale(axis,5)
 								-- silly torque - to fix
@@ -712,8 +707,12 @@ function make_plyr(p,angle)
 		if(btn(1)) da=-1
 
 		-- accelerate
-		if btn(2) then
-			rpm=rpm+0.1
+		if btn(4) then
+			rpm+=0.1
+		end
+		-- brake
+		if btn(5) then
+			rpm=0
 		end
 
 		rpm=self:steer(da/8,rpm)
@@ -838,7 +837,7 @@ function make_npc(p,angle,track)
 		-- shortest angle
 		if(target_angle<0.5) target_angle=1-target_angle
 		target_angle=0.75-target_angle
-		self:steer(target_angle,rpm*lerp(1,0.5,min(abs(target_angle)/0.17,1)))
+		rpm=self:steer(target_angle,rpm)
 
 	end
 	body.update_parts=function(self,total_r,steering_angle)
@@ -919,7 +918,7 @@ function start_state()
 
 	-- npcs
 	for i=0,3 do
-		local npc_track=make_track(track.npc_path,3*i)
+		local npc_track=make_track(track.npc_path,i)
 		local p=v_clone(npc_track:get_next())
 		add(actors,add(npcs, make_npc(p,0,npc_track)))
 	end
@@ -1002,7 +1001,7 @@ function play_state()
 			-- draw npc path
 			local x0,y0=track_project(track_outline[#track_outline],pos,cc,ss)
 			color(0)
-			for i=1,#track_outline,2 do
+			for i=1,#track_outline do
 				local x1,y1=track_project(track_outline[i],pos,cc,ss)
 				line(x0,y0,x1,y1)
 				x0,y0=x1,y1
@@ -1010,10 +1009,10 @@ function play_state()
 			-- draw other cars
 			for _,npc in pairs(npcs) do
 				local x0,y0=track_project(npc:get_pos(),pos,cc,ss)
-				circfill(x0,y0,1.5,0x4)
+				circfill(x0,y0,1.5,0x99)
 			end
 			-- player
-			circfill(44,0,1,0x8)
+			circfill(44,0,1,0x88)
 		end,
 		-- update
 		function()
@@ -1042,7 +1041,7 @@ function play_state()
 					checkpoint=0
 					-- record time
 					add(laps,time_tostr(lap_t))
-					if(lap_t<best_t) then
+					if lap_t<best_t then
 						best_t=lap_t
 						best_i=#laps
 
@@ -1128,7 +1127,7 @@ function _update()
 	-- basic state mgt
 	update_state()
 
-	-- plyr:update_contacts(npcs)
+	plyr:update_contacts(npcs)
 	plyr:prepare()
 	plyr:integrate()	
 	plyr:update()
@@ -1249,9 +1248,6 @@ function collect_model_faces(model,m,parts,out)
 
 		collect_faces(vgroup.f,vg_cam_pos,p,out)
 	end
-
-	-- debug
-	return d
 end
 
 -- draw face
@@ -1320,8 +1316,7 @@ function _draw()
 	
 	-- clear vertex 
 	out={}
-	
-	local lods={}
+
 	for _,actor in pairs(actors) do
 		local pos,angle=actor:get_pos()
 		-- is model visible?
@@ -1331,8 +1326,7 @@ function _draw()
 			local m=actor:get_orient()
 			m_set_pos(m,pos)
 			-- car
-			local d=collect_model_faces(actor.model,m,actor,out)
-			lods[actor]=d
+			collect_model_faces(actor.model,m,actor,out)
 		end
 	end
 	
@@ -1346,12 +1340,6 @@ function _draw()
 	local y=-64
 
 	print(stat(1).."\n"..stat(0).."b",-62,y+2,0)
-	y+=16
-
-	for actor,lod in pairs(lods) do
-		print(lod,-62,y,actor==self and 8 or 10)
-		y+=8
-	end
 
 	-- dark green
 	pal(14,128,1)

@@ -312,33 +312,33 @@ function make_skidmarks()
 	return {
 		make_emitter=function()
 			local emit_t=0
-			local start_pos
+			local last_skidmark
 			return function(pos)
 				-- broken skidmark?
 				if emit_t!=t then
-					start_pos=nil
+					last_skidmark=nil
 				end
-				if(not start_pos) start_pos=v_clone(pos)
-				-- next expected update
+				if(not last_skidmark) last_skidmark=add(skidmarks,{head=v_clone(pos),tail=v_clone(pos),ttl=0})
+ 				-- next expected update
 				emit_t=t+1
 				if emit_t>0 and emit_t%10==0 then
-					local end_pos=v_clone(pos)
-					add(skidmarks,{start_pos,end_pos,0})
-					start_pos=end_pos
+					last_skidmark=add(skidmarks,{head=v_clone(pos),tail=last_skidmark.head,ttl=0})
+				else
+					last_skidmark.head=v_clone(pos)
 				end
 			end
 		end,
 		update=function(self)
 			t+=1
 			for s in all(skidmarks) do
-				s[3]+=1
-				if(s[3]>60) del(skidmarks,s)
+				s.ttl+=1
+				if(s.ttl>60) del(skidmarks,s)
 			end
 		end,
 		draw=function(self)
 			for _,s in pairs(skidmarks) do
-				local x0,y0=cam:project(s[1])
-				local x1,y1=cam:project(s[2])
+				local x0,y0=cam:project(s.head)
+				local x1,y1=cam:project(s.tail)
 				line(x0,y0,x1,y1,5)
 			end
 		end
@@ -717,6 +717,7 @@ function make_car(p,angle,track,fix_pos)
 		v_scale(p,0.2)
 	end
 
+	local full_slide,rear_slide=false,false
 	local skidmark_emitters={
 		skidmarks:make_emitter(),
 		skidmarks:make_emitter(),
@@ -800,6 +801,16 @@ function make_car(p,angle,track,fix_pos)
 
 			-- reset
 			forces,torque={0,0,0},0
+
+			-- skidmarks
+			if full_slide==true then
+				for i,a in pairs(v) do
+					skidmark_emitters[i](self:apply(a))
+				end	
+			elseif rear_slide==true then
+				skidmark_emitters[3](self:apply(v[3]))
+				skidmark_emitters[4](self:apply(v[4]))			
+			end
 		end,
 		get_speed=function(self)
 			return 300*3.6*(v_dot(velocity,velocity)^0.5)
@@ -811,18 +822,9 @@ function make_car(p,angle,track,fix_pos)
 			-- longitudinal slip ratio
 			local right=m_right(self.m)
 			local sr=v_dot(right,velocity)
-			local last_sliding_t=sliding_t
-			local full_slide
-			if abs(sr)>0.12 then
-				sliding_t+=1
-				full_slide=true
-				for i=1,#v do
-					skidmark_emitters[i](self:apply(v[i]))
-				end		
-			else
-				-- not sliding
-				sliding_t=0
-			end
+			-- slipping?
+			full_slide=abs(sr)>0.12
+
 			-- max "grip"
 			sr=mid(sr,-0.10,0.10)
 			sr=1-abs(sr)/0.40
@@ -840,10 +842,7 @@ function make_car(p,angle,track,fix_pos)
 			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
 
 			-- rear wheels sliding?
-			if not full_slide and rps>10 and effective_rps/rps<0.6 then
-				skidmark_emitters[3](self:apply(v[3]))
-				skidmark_emitters[4](self:apply(v[4]))
-			end
+			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6
 
 			return min(rpm,max_rpm)
 		end,
