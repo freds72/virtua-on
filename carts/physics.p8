@@ -164,9 +164,10 @@ function v_clamp(v,l)
 end
 function v_add(v,dv,scale)
 	scale=scale or 1
-	v[1]+=scale*dv[1]
-	v[2]+=scale*dv[2]
-	v[3]+=scale*dv[3]
+	return {
+		v[1]+scale*dv[1],
+		v[2]+scale*dv[2],
+		v[3]+scale*dv[3]}
 end
 -- safe vector length
 function v_len(v)
@@ -304,7 +305,7 @@ function make_cam(scale)
 	}
 end
 
-local cam=make_cam(6)
+local cam=make_cam(24)
 function make_skidmarks()
 	local skidmarks={}
 	local t=0
@@ -435,8 +436,7 @@ function make_track(segments,checkpoint)
 					end
 					-- line intersection
 					local t=-v_dot(make_v(l,prev_pos),n)/v_dot(fwd,n)
-					local fixed_pos=v_clone(prev_pos)
-					v_add(fixed_pos,fwd,0.95*t)
+					local fixed_pos=v_add(prev_pos,fwd,0.95*t)
 					pos[1],pos[3]=fixed_pos[1],fixed_pos[3]
 
 					-- side pos
@@ -542,9 +542,7 @@ end
 local debug_vectors={}
 function draw_vector(f,p,c,v)
 	local x0,y0=cam:project(p)
-	p=v_clone(p)
-	v_add(p,f)
-	local x1,y1=cam:project(p)
+	local x1,y1=cam:project(v_add(p,f))
 	line(x0,y0,x1,y1,c)
 	if v then
 		print(v,x1+3,y1,c)
@@ -561,7 +559,6 @@ function make_plyr(p,a,track)
 	local rpm=0
 
 	local body=make_car(p,a,track,true)
-	
 	body.control=function(self)	
 		local da=0
 		if(btn(0)) da=1
@@ -635,7 +632,7 @@ function make_npc(p,angle,track)
 		-- lookahead
 		-- curve: slow down
 		-- 5 ok
-		local lookahead=flr(2*rpm/0.6)
+		local lookahead=flr(2*rpm/0.6)+1
 
 		local n1,l1,r1=track:get_next(lookahead)
 		local n2,l2,r2=track:get_next(lookahead+1)
@@ -696,7 +693,7 @@ function make_npc(p,angle,track)
 	end
 	body.update=function(self)
 		body_update(self)
-		rpm*=0.97
+		rpm*=0.86
 	end
 	return body
 end
@@ -727,14 +724,13 @@ function make_car(p,angle,track,fix_pos)
 		skidmarks:make_emitter()
 	}
 
+	local contact_offsets={0.250,-0.250}
 	return {
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
 		-- obj to world space
 		apply=function(self,p)
-			p=m_x_v(self.m,p)
-			v_add(p,self.pos)
-			return p
+			return v_add(m_x_v(self.m,p),self.pos)
 		end,
 		get_velocity=function() return velocity end,
 		draw=function(self)	
@@ -745,16 +741,20 @@ function make_car(p,angle,track,fix_pos)
 				line(x0,y0,x1,y1)
 				x0,y0=x1,y1			
 			end
+			for _,offset in pairs(contact_offsets) do
+				local x0,y0=cam:project(self:apply({0,0,offset}))
+				circfill(x0,y0,2,8)
+			end
 		end,		
 		apply_force_and_torque=function(self,f,t)
 			-- add(debug_vectors,{f=f,p=p,c=11,scale=t})
 
-			v_add(forces,f)
+			forces=v_add(forces,f)
 			torque+=t
 		end,
 		prepare=function(self)
 			-- update velocities
-			v_add(velocity,forces,0.5/30)
+			velocity=v_add(velocity,forces,0.5/30)
 			angularv+=torque*0.5/30
 
 			-- apply some damping
@@ -763,9 +763,36 @@ function make_car(p,angle,track,fix_pos)
 			-- some friction
 			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
 		end,
+		update_contacts=function(self,actors)
+			local fwd=m_fwd(self.m)
+			for _,offset in pairs(contact_offsets) do
+				local pos=v_add(self.pos,fwd,offset)
+				local velocity=v_add(self:get_velocity(),v2_ortho({0,0,offset},angularv))
+				for _,actor in pairs(actors) do
+					if actor!=self then
+						local axis=make_v(actor.pos,pos)
+						-- todo: normz and check function?
+						-- in range?
+						local depth=v_len(axis)
+						if depth<0.5 then
+							local relv=make_v(actor.get_velocity(),velocity)	
+							-- separating?
+							local sep=v_dot(axis,relv)
+							if sep<0 then							
+								add(debug_vectors,{f=axis,p=pos,c=4,scale=(0.5-depth)/0.5})
+								-- silly sacle - to fix
+								v_scale(axis,5)
+								-- silly torque - to fix
+								self:apply_force_and_torque(axis,-2*depth*v2_cross({0,0,offset},axis))
+							end
+						end
+					end
+				end
+			end
+		end,
 		integrate=function(self)
 		 	-- update pos & orientation
-			v_add(self.pos,velocity)
+			self.pos=v_add(self.pos,velocity)
 			-- fix
 			angularv=mid(angularv,-1,1)
 			angle+=angularv			
@@ -856,19 +883,17 @@ function _init()
 	checkpoints=make_checkpoints({48,90,125},plyr_track)
 
 	local n,l,r=plyr_track:get_next()
-	l=v_clone(l)
-	v_add(l,r)
+	l=v_add(l,r)
 	v_scale(l,0.5)
 	plyr=make_plyr(l,0,plyr_track)
 
 	add(actors,plyr)
 
 	for i=1,8 do
-		local npc_track=make_track(fixed_tracks,4*i)
+		local npc_track=make_track(fixed_tracks,2*i)
 		if(not static_track) static_track=npc_track
 		local _,l,r=npc_track:get_next()
-		l=v_clone(l)
-		v_add(l,r)
+		l=v_add(l,r)
 		v_scale(l,0.5)
 		--p[1]+=(1-rnd(2))
 		--p[3]+=(1-rnd(2))
@@ -881,6 +906,7 @@ function _update()
 
 	if plyr then
 		plyr:control()
+		plyr:update_contacts(npcs)
 		plyr:prepare()
 		plyr:integrate()	
 		plyr:update()

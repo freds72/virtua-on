@@ -6,11 +6,6 @@ function lerp(a,b,t)
 	return a*(1-t)+b*t
 end
 
-function smoothstep(t)
-	t=mid(t,0,1)
-	return t*t*(3-2*t)
-end
-
 function make_v(a,b)
 	return {
 		b[1]-a[1],
@@ -30,9 +25,10 @@ function v_scale(v,scale)
 end
 function v_add(v,dv,scale)
 	scale=scale or 1
-	v[1]+=scale*dv[1]
-	v[2]+=scale*dv[2]
-	v[3]+=scale*dv[3]
+	return {
+		v[1]+scale*dv[1],
+		v[2]+scale*dv[2],
+		v[3]+scale*dv[3]}
 end
 -- safe vector length
 function v_len(v)
@@ -72,6 +68,11 @@ function v_cross(a,b)
 	local bx,by,bz=b[1],b[2],b[3]
 	return {ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx}
 end
+
+function v2_cross(a,b)
+	return a[1]*b[3]-a[3]*b[1]
+end
+
 -- x/z orthogonal vector
 function v2_ortho(a,scale)
 	return {-scale*a[1],0,scale*a[3]}
@@ -387,8 +388,7 @@ function make_cam()
 
 			-- shift cam position			
 			local m=make_m_from_v_angle(up,self.angle)
-			v_add(pos,m_fwd(m),pov_z)
-			v_add(pos,m_up(m),pov_y)
+			pos=v_add(v_add(pos,m_fwd(m),pov_z),m_up(m),pov_y)
 			
 			-- inverse view matrix
 			-- only invert orientation part
@@ -470,20 +470,18 @@ function make_skidmarks()
 					v_normz(fwd)
 					current_right=v_cross(fwd,oldf.n)
 					-- skidmarks corners
-					local a,b,c,d=v_clone(pos),v_clone(pos),v_clone(start_pos),v_clone(start_pos)
-					v_add(a,current_right,-width)
-					v_add(b,current_right,width)
-					v_add(c,current_right,width)
-					v_add(d,current_right,-width)
 					oldf.skidmarks=oldf.skidmarks or {}
-					current_skidmarks=add(oldf.skidmarks,add(skidmarks,{a,b,c,d,ttl=0,f=oldf}))
+					current_skidmarks=add(oldf.skidmarks,add(skidmarks,{
+						v_add(pos,current_right,-width),
+						v_add(pos,current_right,width),
+						v_add(pos,current_right,width),
+						v_add(pos,current_right,-width),
+						ttl=0,
+						f=oldf}))
 					start_pos,oldf=v_clone(pos),newf
 				elseif current_right then
-					local a,b=v_clone(pos),v_clone(pos)
-					v_add(a,current_right,width)
-					v_add(b,current_right,-width)
-					current_skidmarks[1]=a
-					current_skidmarks[2]=b
+					current_skidmarks[1]=v_add(pos,current_right,width)
+					current_skidmarks[2]=v_add(pos,current_right,-width)
 				end 
 			end
 		end,
@@ -535,8 +533,7 @@ function make_car(model,p,angle)
 		for k,emitter in pairs(emitters) do
 			-- world position
 			local vgroup_offset=model.vgroups[k].offset
-			local ground_pos=m_x_v(self.m,vgroup_offset)
-			v_add(ground_pos,self.pos)
+			local ground_pos=v_add(m_x_v(self.m,vgroup_offset),self.pos)
 			-- stick to ground
 			v_add(ground_pos,oldf.n,-vgroup_offset[2])
 			emitter(ground_pos,oldf)
@@ -566,12 +563,12 @@ function make_car(model,p,angle)
 		apply_force_and_torque=function(self,f,t)
 			-- add(debug_vectors,{f=f,p=p,c=11,scale=t})
 
-			v_add(forces,f)
+			forces=v_add(forces,f)
 			torque+=t
 		end,
 		prepare=function(self)
 			-- update velocities
-			v_add(velocity,forces,0.5/30)
+			velocity=v_add(velocity,forces,0.5/30)
 			angularv+=torque*0.5/30
 
 			-- apply some damping
@@ -582,7 +579,7 @@ function make_car(model,p,angle)
 		end,
 		integrate=function(self)
 		 	-- update pos & orientation
-			v_add(self.pos,velocity)
+			self.pos=v_add(self.pos,velocity)
 			-- fix
 			angularv=mid(angularv,-1,1)
 			angle+=angularv			
@@ -634,6 +631,32 @@ function make_car(model,p,angle)
 
 			return min(rpm,max_rpm)
 		end,
+		update_contacts=function(self,actors)
+			local fwd=m_fwd(self.m)
+			for _,offset in pairs({0.250,-0.250}) do
+				local pos=v_add(self.pos,fwd,offset)
+				local velocity=v_add(self:get_velocity(),v2_ortho({0,0,offset},angularv))
+				for _,actor in pairs(actors) do
+					if actor!=self then
+						local axis=make_v(actor.pos,pos)
+						-- todo: normz and check function?
+						-- in range?
+						local depth=v_len(axis)
+						if depth<0.5 then
+							local relv=make_v(actor.get_velocity(),velocity)	
+							-- separating?
+							local sep=v_dot(axis,relv)
+							if sep<0 then							
+								add(debug_vectors,{f=axis,p=pos,c=4,scale=(0.5-depth)/0.5})
+								-- silly torque - to fix
+								v_scale(axis,5)
+								self:apply_force_and_torque(axis,-depth*v2_cross({0,0,offset},axis)/0.5)
+							end
+						end
+					end
+				end
+			end
+		end,	
 		update=function(self)
 			steering_angle*=0.8
 
@@ -657,24 +680,17 @@ function make_car(model,p,angle)
 			if oldf and oldf.borders then
 				local hit,force,hit_n=face_collide(oldf,pos,0.25)
 				if hit then
-					v_add(pos,force)
+					self.pos=v_add(pos,force)
 					--simulate sliding contact (no impact on velocity) vs. direct hit (massive slowdown)
 					local friction=v_dot(velocity,hit_n)
 					-- non separating?
 					if(friction<-0.01) v_scale(velocity,1+friction)
 				end
 			end
-
 			-- update car parts (orientations)
 			local fwd=m_fwd(self.m)
 			total_r+=v_dot(fwd,velocity)/0.2638
-			local wheel_m=make_m_from_euler(total_r,0,0)
-			self.rrw=wheel_m
-			self.lrw=wheel_m
-			wheel_m=make_m_from_euler(total_r,-steering_angle/8,0)
-			self.lfw=wheel_m
-			self.rfw=wheel_m
-			self.sw=m_from_q(make_q({0,0.2144,-0.9767},-steering_angle/2))
+			self:update_parts(total_r,steering_angle)
 		end
 	}	
 end
@@ -707,15 +723,15 @@ function make_plyr(p,angle)
 		rpm*=0.97
 
 		local vol=self:get_speed()/400
- 	local rpmvol=band(0x3f,flr(32*vol))
- 	-- sfx 0
- 	local addr=0x3200+68*0
- 	-- adjust pitch
- 	poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+		local rpmvol=band(0x3f,flr(32*vol))
+		-- sfx 0
+		local addr=0x3200+68*0
+		-- adjust pitch
+		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
 		-- base engine
 		rpmvol=max(8,rpmvol-8)
- 	addr+=2
- 	poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+		addr+=2
+		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
 
 		-- rough terrain?
 		local ground=self:get_ground()		
@@ -724,21 +740,31 @@ function make_plyr(p,angle)
 			cam:shake(rnd(shake_force),rnd(shake_force),1)
 		end
 	end
+	body.update_parts=function(self,total_r,steering_angle)
+		local wheel_m=make_m_from_euler(total_r,0,0)
+		self.rrw=wheel_m
+		self.lrw=wheel_m
+		wheel_m=make_m_from_euler(total_r,-steering_angle/8,0)
+		self.lfw=wheel_m
+		self.rfw=wheel_m
+		self.sw=m_from_q(make_q({0,0.2144,-0.9767},-steering_angle/2))
+	end
 	-- wrapper
 	return body
 end
 
-function make_track(segments)
+function make_track(segments,checkpoint)
 	local n=#segments
 	-- active index
-	local checkpoint=0
+	checkpoint=checkpoint or 0
 	local function to_v(i)
 		return segments[i+1]
 	end
 	return {	
 		-- returns next location
-		get_next=function(self)
-			return to_v(checkpoint)
+		get_next=function(self,offset)
+			offset=offset or 0
+			return to_v(checkpoint+offset)
 		end,
 		update=function(self,pos,dist)
 			local p=to_v(checkpoint)
@@ -768,8 +794,7 @@ function make_npc(p,angle,track)
 		-- lookahead
 		local fwd=m_fwd(self.m)
 		-- force application point
-		local p=v_clone(self.pos)
-		v_add(p,fwd,3)
+		local p=v_add(self.pos,fwd,3)
 		
 		local rpm=0.6
 		-- default: steer to track
@@ -777,6 +802,7 @@ function make_npc(p,angle,track)
 		local target_angle=atan2(target[1],target[3])
 
 		-- avoid collisions
+		--[[
 		local velocity=self.get_velocity()
 		for _,actor in pairs(actors) do
 			if actor!=self then
@@ -806,12 +832,18 @@ function make_npc(p,angle,track)
 				end
 			end
 		end
-		
+		]]
+
 		-- shortest angle
 		if(target_angle<0.5) target_angle=1-target_angle
 		target_angle=0.75-target_angle
 		self:steer(target_angle,rpm*lerp(1,0.5,min(abs(target_angle)/0.17,1)))
 
+	end
+	body.update_parts=function(self,total_r,steering_angle)
+		local wheel_m=make_m_from_euler(total_r,0,0)
+		self.rw=wheel_m
+		self.fw=wheel_m
 	end
 	-- wrapper
 	return body
@@ -859,7 +891,7 @@ function face_collide(f,p,r)
 		local dist=v_dot(pv,b.n)
 		if dist<r then
 			hit,n=true,b.n
-			v_add(force,b.n,r-dist)
+			force=v_add(force,b.n,r-dist)
 		end
 	end
 	return hit,force,n
@@ -885,15 +917,11 @@ function start_state()
 	cam=make_cam()
 
 	-- npcs
-	--[[
-	for i=1,4 do
-		local npc_track=make_track(track.npc_path)
+	for i=0,3 do
+		local npc_track=make_track(track.npc_path,3*i)
 		local p=v_clone(npc_track:get_next())
-		--p[1]+=(1-rnd(2))
-		p[3]+=i/8
 		add(actors,add(npcs, make_npc(p,0,npc_track)))
 	end
-	]]
 
 	local ttl=90 -- 3*30
 
@@ -1099,6 +1127,7 @@ function _update()
 	-- basic state mgt
 	update_state()
 
+	-- plyr:update_contacts(npcs)
 	plyr:prepare()
 	plyr:integrate()	
 	plyr:update()
@@ -1208,7 +1237,6 @@ function collect_model_faces(model,m,parts,out)
 		
 		-- lookup vertex group orientation from parts
 		local vgm=parts[name]
-
 		-- cam to vgroup space
 		-- note: cam_pos is already in object space
 		local vg_cam_pos=m_inv_x_v(vgm,make_v(vgroup.offset,cam_pos))
@@ -1218,8 +1246,11 @@ function collect_model_faces(model,m,parts,out)
 		-- use the same vertex cache
 		p.m=m_x_m(m_base,vgm)
 
-	 	collect_faces(vgroup.f,vg_cam_pos,p,out)
+		collect_faces(vgroup.f,vg_cam_pos,p,out)
 	end
+
+	-- debug
+	return d
 end
 
 -- draw face
@@ -1289,6 +1320,7 @@ function _draw()
 	-- clear vertex 
 	out={}
 	
+	local lods={}
 	for _,actor in pairs(actors) do
 		local pos,angle=actor:get_pos()
 		-- is model visible?
@@ -1298,7 +1330,8 @@ function _draw()
 			local m=actor:get_orient()
 			m_set_pos(m,pos)
 			-- car
-			collect_model_faces(actor.model,m,actor,out)
+			local d=collect_model_faces(actor.model,m,actor,out)
+			lods[actor]=d
 		end
 	end
 	
@@ -1312,6 +1345,12 @@ function _draw()
 	local y=-64
 
 	print(stat(1).."\n"..stat(0).."b",-62,y+2,0)
+	y+=16
+
+	for actor,lod in pairs(lods) do
+		print(lod,-62,y,actor==self and 8 or 10)
+		y+=8
+	end
 
 	-- dark green
 	pal(14,128,1)
@@ -1455,8 +1494,6 @@ function unpack_models()
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
 		scale=1/32
-		printh(name..": "..scale)
-
 		unpack_array(function()
 			local d=unpack_double()
 			assert(d<127,"lod distance too large:"..d)
