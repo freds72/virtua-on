@@ -503,7 +503,7 @@ end
 local skidmarks=make_skidmarks()
 
 -- "physic body" for simple car
-function make_car(model,p,angle,track)
+function make_car(model_name,lod_id,p,angle,track)
 	-- last contact face
 	local oldf
 
@@ -511,6 +511,9 @@ function make_car(model,p,angle,track)
 	local forces,torque={0,0,0},0
 
 	local is_braking,max_rpm,steering_angle,total_r=false,0.6,0,0
+
+	-- model for skidmarks (if any)
+	local model=lod_id and all_models[model_name].lods[lod_id]
 
 	-- front wheels
 	local front_emitters={
@@ -539,6 +542,8 @@ function make_car(model,p,angle,track)
 	end
 
 	return {
+		-- 3d model reference
+		model=all_models[model_name],
 		track=track,
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
@@ -699,15 +704,13 @@ function make_car(model,p,angle,track)
 end
 
 function make_plyr(p,angle,track)
-	local rpm=0
-	local body=make_car(all_models["car"].lods[2],p,angle,track)
+	local rpm,body=0,make_car("car",2,p,angle,track)
 	
 	-- backup parent methods
 	local body_update=body.update
 
 	sfx(0)
 	
-	body.model=all_models["car"]
 	body.control=function(self)	
 		local da=0
 		if(btn(0)) da=1
@@ -717,7 +720,7 @@ function make_plyr(p,angle,track)
 		if btn(4) then
 			rpm+=0.1
 		end
-		-- brake
+		-- brake (sort of)
 		if btn(5) then
 			rpm=0
 		end
@@ -850,7 +853,7 @@ function make_track(segments,segment)
 end
 
 function make_npc(p,angle,track)	
-	local body=make_car(nil,p,angle,track)
+	local body=make_car("car_ai",nil,p,angle,track)
 	local rpm=0.6
 
 	-- return world position p in local space (2d)
@@ -859,9 +862,6 @@ function make_npc(p,angle,track)
 		local x,y,z,m=p[1],p[2],p[3],self.m
 		return {m[1]*x+m[2]*y+m[3]*z,0,m[7]*x+m[8]*y+m[9]*z}
 	end
-
-	-- car model
-	body.model=all_models["car_ai"]
 
 	body.control=function(self)
 		local fwd=m_fwd(self.m)
@@ -1165,13 +1165,18 @@ function _init()
 	-- integrated fillp/color
 	poke(0x5f34,1)
 
+	-- dark green
+	pal(14,128,1)
+	-- dark blue
+	pal(15,131,1)
+
 	-- track name (from params)
 	local track_id=stat(6)
 	if track_id=="" then
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=0
+		track_id=2
 	end
 	
 	-- load regular 3d models
@@ -1251,6 +1256,7 @@ function collect_faces(faces,cam_pos,v_cache,out)
 					is_clipped+=v3.clipcode
 					y+=v3[2]
 					z+=v3[3]
+					-- number of faces^2
 					ni=16
 				end
 				-- mix of near+far vertices?
@@ -1406,11 +1412,6 @@ function _draw()
 	local y=-32
 
 	print(stat(1).."\n"..update_cpu.."(u)\n"..stat(0).."b\n"..plyr.track:get_u(),-62,y+2,0)
-
-	-- dark green
-	pal(14,128,1)
-	-- dark blue
-	pal(15,131,1)
 end
 
 -->8
