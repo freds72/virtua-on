@@ -3,20 +3,19 @@ version 18
 __lua__
 
 local track_data={
-	{-25.13,0,-48.38},{-21.31,0,-48.38},
-	{-25.13,0,-44.44},{-21.31,0,-44.44},
-	{-25.13,0,-40.5},{-21.31,0,-40.5},
-	{-25.13,0,-36.56},{-21.31,0,-36.56},
-	{-25.12,0,-32.6},{-21.31,0,-32.6},
-	{-25.12,0,-28.66},{-21.31,0,-28.66},
-	{-25.12,0,-24.72},{-21.31,0,-24.72},
-	{-25.12,0,-20.79},{-21.31,0,-20.79},
-	{-25.12,0,-16.85},{-21.31,0,-16.85},
-	{-25.12,0,-12.91},{-21.31,0,-12.91},
+	{-30.45,0,-48.38},{-21.31,0,-48.38},
+	{-30.45,0,-44.44},{-21.31,0,-44.44},
+	{-30.45,0,-40.5},{-21.31,0,-40.5},
+	{-30.45,0,-36.56},{-21.31,0,-36.56},
+	{-30.44,0,-32.6},{-21.31,0,-32.6},
+	{-30.44,0,-28.66},{-21.31,0,-28.66},
+	{-30.44,0,-24.72},{-21.31,0,-24.72},
+	{-30.44,0,-20.79},{-21.31,0,-20.79},
+	{-30.44,0,-16.85},{-21.31,0,-16.85},
+	{-29.88,0,-12.91},{-21.31,0,-12.91},
 	{-29.47,0,-8.97},{-21.31,0,-8.97},
 	{-29.08,0,-4.89},{-21.31,0,-4.89},
 	{-28.65,0,-0.77},{-21.31,0,-0.77},
-	{-28.65,0,-0.77},{-18.31,0,-0.77},
 	{-26.95,0,3.36},{-21.31,0,3.36},
 	{-25.31,0,7.41},{-21.43,0,7.41},
 	{-25.31,0,11.16},{-21.43,0,11.16},
@@ -127,9 +126,8 @@ local track_data={
 	{-26.64,0,-66.45},{-21.27,0,-66.46},
 	{-27.59,0,-63.09},{-21.28,0,-63.09},
 	{-27.59,0,-59.8},{-21.3,0,-59.8},
-	{-25.14,0,-56.38},{-21.3,0,-56.31},
-	{-25.14,0,-52.25},{-21.31,0,-52.25}}
-
+	{-28.13,0,-56.42},{-21.3,0,-56.31},
+	{-29.82,0,-52.25},{-21.31,0,-52.25}}
 
 -->8
 -- game
@@ -305,7 +303,7 @@ function make_cam(scale)
 	}
 end
 
-local cam=make_cam(24)
+local cam=make_cam(6)
 function make_skidmarks()
 	local skidmarks={}
 	local t=0
@@ -397,7 +395,11 @@ function make_track(segments,checkpoint)
 		end
 	end
 
-	return {	
+	return {
+		-- have we past given segment index
+		gt=function(self,laps,i)
+			return track_u>laps*n+i
+		end,	
 		-- returns location after checkpoint
 		-- 0: current checkpoint
 		-- +1: next boundary
@@ -497,7 +499,7 @@ function make_checkpoints(checkpoints,track)
 				return
 			end
 			lap_t+=1
-			if track:get_u()>#laps*125+checkpoints[checkpoint+1] then
+			if track:gt(#laps,checkpoints[checkpoint+1]) then
 				checkpoint+=1
 				remaining_t+=30*30
 				-- closed lap?
@@ -869,7 +871,9 @@ function _init()
 	-- caclulate normals
 	for i=1,#track_data,2 do
 		local l0,r0=track_data[i],track_data[i+1]
-		add(fixed_tracks,v_normz(v2_ortho(make_v(l0,r0))))
+		local n=v_normz(v2_ortho(make_v(l0,r0)))
+		printh(n[1]..","..n[2]..","..n[3])
+		add(fixed_tracks,n)
 		add(fixed_tracks,l0)
 		add(fixed_tracks,r0)
 	end
@@ -943,8 +947,8 @@ function _draw()
 	checkpoints:draw()
 
 	if(plyr) print(plyr:get_speed().."km/h",2,2,7)
-	local v=plyr_track:get_v()
-	print(v,2,8,(v>=0 and v<=1) and 7 or 8)
+	local v=plyr_track:get_u()
+	print(v,2,8,7)
 
 	local cpu=flr(1000*stat(1))/10
 	print(cpu.."%",2,118,2)

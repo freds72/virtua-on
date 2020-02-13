@@ -27,7 +27,8 @@ def get_track_vertices(obcontext,side):
     bm.from_mesh(obdata)
     bm.verts.ensure_lookup_table()
 
-    chkpt_vg = obcontext.vertex_groups.get('CHECKPT_{}_000'.format(side))
+    # get first vertex
+    chkpt_vg = obcontext.vertex_groups.get('CHECKPT_{}_2'.format(side))
     start_vert = [v for v in obcontext.data.vertices if chkpt_vg.index in [ vg.group for vg in v.groups ]][0]
     track_vg = obcontext.vertex_groups.get('TRACK_{}'.format(side))
     vert_count = len([v for v in obcontext.data.vertices if track_vg.index in [ vg.group for vg in v.groups ]])

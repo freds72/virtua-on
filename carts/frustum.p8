@@ -48,7 +48,7 @@ function v_normz(v)
 		v[2]/=d
 		v[3]/=d
 	end
-	return d
+	return v
 end
 function v_cross(a,b)
 	local ax,ay,az=a[1],a[2],a[3]
@@ -75,7 +75,7 @@ end
 
 -- x/z orthogonal vector
 function v2_ortho(a,scale)
-	return {-scale*a[1],0,scale*a[3]}
+	return {-scale*a[3],0,scale*a[1]}
 end
 
 local v_up={0,1,0}
@@ -358,6 +358,7 @@ function make_cam()
 				local next_pov_z,next_pov_y,next_pov_lag,next_znear,next_dist=next_pov.z,next_pov.y,next_pov.lag,next_pov.znear,next_pov.dist
 				switching_async=cocreate(function()
 					for i=0,30 do
+						-- todo: token optimize!
 						local t=0.22
 						pov_z=lerp(pov_z,next_pov_z,t)
 						pov_y=lerp(pov_y,next_pov_y,t)
@@ -502,19 +503,15 @@ end
 local skidmarks=make_skidmarks()
 
 -- "physic body" for simple car
-function make_car(model,p,angle)
+function make_car(model,p,angle,track)
 	-- last contact face
 	local oldf
 
 	local velocity,angularv={0,0,0},0
 	local forces,torque={0,0,0},0
 
-	local is_braking=false
-	local max_rpm=0.6
-	local steering_angle=0
+	local is_braking,max_rpm,steering_angle,total_r=false,0.6,0,0
 
-	local total_r=0
-	
 	-- front wheels
 	local front_emitters={
 		lfw=skidmarks:make_emitter(),
@@ -530,6 +527,7 @@ function make_car(model,p,angle)
 	local do_skidmarks=function(self,emitters)
 		-- no 3d model?
 		if(not model) return
+		if(not oldf) return
 		for k,emitter in pairs(emitters) do
 			-- world position
 			local vgroup_offset=model.vgroups[k].offset
@@ -541,6 +539,7 @@ function make_car(model,p,angle)
 	end
 
 	return {
+		track=track,
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
 		get_pos=function(self)
@@ -598,11 +597,11 @@ function make_car(model,p,angle)
 		end,
 		steer=function(self,steering_dt,rpm)
 			is_braking=rpm<0
-			steering_angle+=mid(steering_dt,-0.15,0.15)
+			steering_angle+=mid(steering_dt,-0.2,0.2)
 
 			-- longitudinal slip ratio
-			local right=m_right(self.m)
-			local sr=v_dot(right,velocity)
+			local sr=v_dot(m_right(self.m),velocity)
+			-- slipping?
 			full_slide=abs(sr)>0.12 
 
 			-- max "grip"
@@ -628,32 +627,36 @@ function make_car(model,p,angle)
 		end,
 		update_contacts=function(self,actors)
 			local fwd=m_fwd(self.m)
-			for _,offset in pairs({0.250,-0.250}) do
-				local pos=v_add(self.pos,fwd,offset)
-				local velocity=v_add(self:get_velocity(),v2_ortho({0,0,offset},angularv))
-				for _,actor in pairs(actors) do
-					if actor!=self then
-						local axis=make_v(actor.pos,pos)
+			local pos=self.pos
+			for _,actor in pairs(actors) do
+				if actor!=self and v_len(make_v(pos,actor.pos))<2 then
+					local actorv=actor:get_velocity()
+					-- 2 colliders
+					for _,offset in pairs({0.250,-0.250}) do
+						-- position and absolute velocity
+						local axis=make_v(actor.pos,v_add(pos,fwd,offset))
 						-- todo: normz and check function?
 						-- in range?
 						local depth=v_len(axis)
-						if depth<0.5 then
-							local relv=make_v(actor.get_velocity(),velocity)	
+						if depth<0.312 then
+							local relv=make_v(actor.get_velocity(),v_add(self:get_velocity(),v2_ortho({0,0,offset},angularv)))	
 							-- separating?
-							local sep=v_dot(axis,relv)
-							if sep<0 then							
+							if v_dot(axis,relv)<0 then							
 								-- add(debug_vectors,{f=axis,p=pos,c=4,scale=(0.5-depth)/0.5})
-								-- silly sacle - to fix
+								-- silly scale - to fix
 								v_scale(axis,5)
 								-- silly torque - to fix
 								self:apply_force_and_torque(axis,-2*depth*v2_cross({0,0,offset},axis))
 							end
 						end
 					end
+					-- assumes only 1 actor in range
+					break
 				end
 			end
 		end,
 		update=function(self)
+			-- back to neutral
 			steering_angle*=0.8
 
 			-- find ground
@@ -683,6 +686,10 @@ function make_car(model,p,angle)
 					if(friction<-0.01) v_scale(velocity,1+friction)
 				end
 			end
+
+			-- update track coordinates
+			track:update(self.pos)
+
 			-- update car parts (orientations)
 			local fwd=m_fwd(self.m)
 			total_r+=v_dot(fwd,velocity)/0.2638
@@ -691,9 +698,9 @@ function make_car(model,p,angle)
 	}	
 end
 
-function make_plyr(p,angle)
+function make_plyr(p,angle,track)
 	local rpm=0
-	local body=make_car(all_models["car"].lods[2],p,angle)
+	local body=make_car(all_models["car"].lods[2],p,angle,track)
 	
 	-- backup parent methods
 	local body_update=body.update
@@ -753,98 +760,148 @@ function make_plyr(p,angle)
 	return body
 end
 
-function make_track(segments,checkpoint)
-	local n=#segments
+-- track segments
+function make_track(segments,segment)
+	-- segments layout:
+	-- normal/left/right/len(left)/len(right)
+	local n=#segments/5
 	-- active index
-	checkpoint=checkpoint or 0
+	segment=segment or 0
+	-- track local coordinates
+	-- track_u: absolute distance on track
+	-- track_v: left/right position ratio 
+	local track_u,track_v=segment,0
+
 	local function to_v(i)
-		return segments[i+1]
+		i=i%n
+		return segments[5*i+1],segments[5*i+2],segments[5*i+3]
 	end
+	-- starting quad
+	local n0,l0,r0=to_v(segment)
+	local n1,l1,r1=to_v(segment+1)
+
+	local function next()
+		segment+=1
+		n0,l0,r0=n1,l1,r1
+		n1,l1,r1=to_v(segment+1)	
+		-- 'flat segment'
+		if (abs(v_dot(make_v(l0,l1),n0))<0.001 or abs(v_dot(make_v(l0,r1),n0))<0.001) next()
+	end
+	local function prev()
+		-- going backward!!
+		segment-=1
+		n1,l1,r1=n0,l0,r0
+		n0,l0,r0=to_v(segment)
+		-- 'flat segment'
+		if (abs(v_dot(make_v(l0,l1),n0))<0.001 or abs(v_dot(make_v(l0,r1),n0))<0.001) prev()
+	end
+
+	local function get_d(pos)
+		local d0=v_dot(make_v(pos,l0),n0)
+		return d0/(d0-v_dot(make_v(pos,l1),n1))
+	end
+
 	return {	
-		-- returns next location
+		-- have we past given segment index
+		gt=function(self,laps,i)
+			return track_u>laps*n+i
+		end,
+		-- returns location after segment
+		-- 0: current segment
+		-- +1: next boundary
 		get_next=function(self,offset)
 			offset=offset or 0
-			return to_v(checkpoint+offset)
+			return to_v(segment+offset)
 		end,
-		update=function(self,pos,dist)
-			local p=to_v(checkpoint)
-			if v_len(make_v(pos,p))<dist then
-				checkpoint+=1
-				checkpoint%=n
+		-- side lengths
+		get_length=function(self,offset)
+			local i=(segment+offset)%n
+			return segments[5*i+4],segments[5*i+5]
+		end,
+		update=function(self,pos)
+			-- have we past end of current segment?
+			local d=get_d(pos)
+			if d>1 then
+				next()
+			elseif d<0 then
+				prev()
 			end
-			return to_v(checkpoint)
+			-- refresh d
+			d=get_d(pos)
+			track_u=segment+(d%1)
+
+			-- left/right local position
+			local ll,rr=v_lerp(l0,l1,d),v_lerp(r0,r1,d)
+			local v=make_v(ll,rr)
+			track_v=v_dot(v,make_v(ll,pos))/v_dot(v,v)
+		end,
+		-- mod: modulo or not
+		get_u=function(self,mod)
+			return mod and track_u%n or track_u
+		end,
+		get_v=function()
+			return track_v
+		end,
+		-- debug
+		get_segment=function()
+			return segment
 		end
 	}
 end
 
 function make_npc(p,angle,track)	
-	local body=make_car(nil,p,angle)
+	local body=make_car(nil,p,angle,track)
+	local rpm=0.6
 
 	-- return world position p in local space (2d)
-	function inv_apply(self,target)
-		p=make_v(self.pos,target)
+	local function inv_apply(self,target)
+		local p=make_v(self.pos,target)
 		local x,y,z,m=p[1],p[2],p[3],self.m
 		return {m[1]*x+m[2]*y+m[3]*z,0,m[7]*x+m[8]*y+m[9]*z}
 	end
 
-	-- todo: switch to npc car model
+	-- car model
 	body.model=all_models["car_ai"]
 
 	body.control=function(self)
-		-- lookahead
 		local fwd=m_fwd(self.m)
-		-- force application point
-		local p=v_add(self.pos,fwd,3)
-		
-		local rpm=0.6
-		-- default: steer to track
-		local target=inv_apply(self,track:update(p,24))
-		local target_angle=atan2(target[1],target[3])
+		-- lookahead according to current "acceleration"
+		local lookahead=flr(2*rpm/0.6)+1
 
-		-- avoid collisions
-		--[[
-		local velocity=self.get_velocity()
-		for _,actor in pairs(actors) do
-			if actor!=self then
-				local axis=make_v(actor.pos,self.pos)
-				-- todo: normz and check function?
-				-- in range?
-				if v_len(axis)<16 then
-					local axis_bck=v_clone(axis)
-					v_normz(axis)
-					local relv=make_v(actor.get_velocity(),velocity)					
-					-- separating?
-					local sep=v_dot(axis,relv)
-					if sep<0 then
-						
-						local local_pos=inv_apply(self,actor.pos)
-						-- in front?
-						-- in path?
-						if local_pos[3]>0 and abs(local_pos[1])<2 then							
-							local x=local_pos[1]
-							local escape_axis=v2_ortho(axis,1)
-							local_pos[1]+=1/v_dot(relv,escape_axis)
-							target_angle=atan2(local_pos[1],local_pos[3])
-							rpm/=2
-							break
-						end
-					end
-				end
-			end
+		local n1,l1,r1=track:get_next(lookahead)
+		local n2,l2,r2=track:get_next(lookahead+1)
+		local len1,len2=track:get_length(lookahead)
+		-- find track target point based on curvature		
+		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+		-- is target far away from forward direction?
+		local curve=v_dot(fwd,v_normz(make_v(self.pos,tgt)))
+		if curve<0.95 then
+			rpm=max(0.1,rpm-0.2)
+		else
+			-- accelerate
+			rpm+=0.05
 		end
-		]]
+
+		-- default: steer to track
+		local target=inv_apply(self,tgt)
+		local target_angle=atan2(target[1],target[3])
 
 		-- shortest angle
 		if(target_angle<0.5) target_angle=1-target_angle
 		target_angle=0.75-target_angle
-		rpm=self:steer(target_angle,rpm)
-
+		rpm=self:steer(4*target_angle,rpm)
 	end
 	body.update_parts=function(self,total_r,steering_angle)
 		local wheel_m=make_m_from_euler(total_r,0,0)
 		self.rw=wheel_m
 		self.fw=wheel_m
 	end
+	local body_update=body.update
+	body.update=function(self)
+		body_update(self)
+		rpm*=0.92
+	end
+
 	-- wrapper
 	return body
 end
@@ -910,17 +967,19 @@ function start_state()
 	-- start over
 	actors,npcs={},{}
 
-	-- create player in correct direction
-	plyr=add(actors,make_plyr(track.start_pos,0))
+	-- reset player
+	plyr=add(actors,make_plyr(track.start_pos,0,make_track(track.segments)))
 
 	-- reset cam	
 	cam=make_cam()
 
 	-- npcs
-	for i=0,3 do
-		local npc_track=make_track(track.npc_path,i)
-		local p=v_clone(npc_track:get_next())
-		add(actors,add(npcs, make_npc(p,0,npc_track)))
+	for i=0,6 do
+		local npc_track=make_track(track.segments,5*i)
+		local _,l,r=npc_track:get_next()
+		l=v_add(l,r)
+		v_scale(l,0.5)
+		add(actors,add(npcs, make_npc(l,0,npc_track)))
 	end
 
 	local ttl=90 -- 3*30
@@ -938,20 +997,14 @@ function start_state()
 		function()
 			if(ttl%30==0) sfx(2)
 			ttl-=1
-			if(ttl<0) sfx(3) next_state(play_state)
+			if(ttl<0) sfx(3) next_state(play_state,track.checkpoints)
 		end
 end
 
 
-function play_state()
+function play_state(checkpoints)
 	-- active index
-	local checkpoint,segments=0,track.checkpoints
-	local n=#segments/3
-	-- active index
-	local checkpoint=0
-	local function to_v(i)
-		return {segments[3*i+1],0,segments[3*i+2]},segments[3*i+3]
-	end
+	local checkpoint,n=0,#checkpoints
 
 	-- previous laps
 	local laps={}
@@ -967,7 +1020,8 @@ function play_state()
 		local x,y=v[1]-pos[1],v[3]-pos[3]
 		return 44+0.3*(cc*x-ss*y),-0.3*(ss*x+cc*y)
 	end
-		
+	
+	local ranks={"st","nd","rd"}
 	return
 		-- draw
 		function()
@@ -995,20 +1049,31 @@ function play_state()
 			printb(#laps+1,26,y,9,0)
 			printb(time_tostr(lap_t),34,y,7,0)
 			
+			-- ranking
+			local rank,plyr_u=#npcs+1,plyr.track:get_u()
+			for _,npc in pairs(npcs) do
+				if plyr_u>npc.track:get_u() then
+					rank-=1
+				end
+			end
+			printb("rank",-62,-62,7,0)
+			local x0=printf(tostr(rank),-52,-55,xlfont)
+			printr(ranks[rank] or "th",x0,-53,10,9)
+
 			-- track map
 			local pos,angle=plyr:get_pos()
-			local cc,ss,track_outline=cos(angle),-sin(angle),track.npc_path
+			local cc,ss,track_outline=cos(angle),-sin(angle),track.segments
 			-- draw npc path
-			local x0,y0=track_project(track_outline[#track_outline],pos,cc,ss)
+			local x0,y0=track_project(track_outline[#track_outline-3],pos,cc,ss)
 			color(0)
-			for i=1,#track_outline do
-				local x1,y1=track_project(track_outline[i],pos,cc,ss)
+			for i=1,#track_outline,5 do
+				local x1,y1=track_project(track_outline[i+1],pos,cc,ss)
 				line(x0,y0,x1,y1)
 				x0,y0=x1,y1
 			end
 			-- draw other cars
 			for _,npc in pairs(npcs) do
-				local x0,y0=track_project(npc:get_pos(),pos,cc,ss)
+				local x0,y0=track_project(npc.pos,pos,cc,ss)
 				circfill(x0,y0,1.5,0x99)
 			end
 			-- player
@@ -1025,8 +1090,7 @@ function play_state()
 				return
 			end
 			lap_t+=1
-			local p,r=to_v(checkpoint)
-			if v_len(make_v({plyr.pos[1],0,plyr.pos[3]},p))<r then
+			if plyr.track:gt(#laps,checkpoints[checkpoint+1]) then
 				checkpoint+=1
 				remaining_t+=30*10
 				extend_time_t=30*5
@@ -1037,7 +1101,7 @@ function play_state()
 				sfx(4)
 				
 				-- closed lap?
-				if checkpoint%n==0 then
+				if checkpoint==#checkpoints then
 					checkpoint=0
 					-- record time
 					add(laps,time_tostr(lap_t))
@@ -1287,6 +1351,8 @@ function draw_faces(faces,v_cache)
 end
 
 function _draw()
+	local update_cpu=stat(1)
+
 	sessionid+=1
 
 	-- background
@@ -1336,10 +1402,10 @@ function _draw()
 
 	-- hud and game state display
 	draw_state()
-	
-	local y=-64
 
-	print(stat(1).."\n"..stat(0).."b",-62,y+2,0)
+	local y=-32
+
+	print(stat(1).."\n"..update_cpu.."(u)\n"..stat(0).."b\n"..plyr.track:get_u(),-62,y+2,0)
 
 	-- dark green
 	pal(14,128,1)
@@ -1544,21 +1610,8 @@ function unpack_track(id)
 		ground={},
 		start_pos=unpack_v(),
 		checkpoints={},
-		npc_path={}}
-	-- checkpoints
-	unpack_array(function()
-		-- coords
-		add(model.checkpoints,unpack_double())
-		add(model.checkpoints,unpack_double())
-		-- radius
-		add(model.checkpoints,unpack_double())
-	end)
+		segments={}}
 
-	-- npc path
-	unpack_array(function()
-		add(model.npc_path,{unpack_double(),0,unpack_double()})
-	end)
-	
 	-- vertices + faces + normal data
 	unpack_model(model)
 
@@ -1576,6 +1629,34 @@ function unpack_track(id)
 		-- list of ground faces per voxel
 		model.ground[id]=#solid_faces>0 and solid_faces
 	end)
+
+	-- track segments
+	local tmp={}
+	unpack_array(function()
+		local l,r=model.v[unpack_variant()],model.v[unpack_variant()]
+		-- left
+		add(tmp,l)
+		-- right
+		add(tmp,r)
+	end)
+	local segments=model.segments
+	for i=0,#tmp-1,2 do
+		local l0,r0=tmp[i+1],tmp[i+2]
+		-- normal
+		add(segments,v_normz(v2_ortho(make_v(l0,r0),1)))
+		add(segments,l0)
+		add(segments,r0)
+		-- to avoid costly length compute at runtime
+		local l1,r1=tmp[(i+2)%#tmp+1],tmp[(i+3)%#tmp+1]
+		add(segments,v_len(make_v(l0,l1)))
+		add(segments,v_len(make_v(r0,r1)))
+	end
+	-- checkpoints
+	unpack_array(function()
+		-- segment index
+		add(model.checkpoints,unpack_variant())
+	end)
+
 	return model	
 end
 

@@ -382,19 +382,75 @@ def export_spline(spline):
         s += "{}{}".format(pack_double(loc.x), pack_double(loc.y))
     return s
 
-def export_checkpoints():
-    # max. 9 checkpoints
-    checkpoints = []
-    for i in range(1,10):
-        checkpoint_name = 'checkpoint_{}'.format(i)
-        if checkpoint_name in scene.objects:
-            checkpoint = scene.objects[checkpoint_name]
-            # 2d position + radius
-            checkpoints.append("{}{}{}".format(pack_double(checkpoint.location.x), pack_double(checkpoint.location.y),pack_double(checkpoint.empty_draw_size)))
-    s = pack_variant(len(checkpoints))
-    for data in checkpoints:
-        s += data
-    return s
+# loop through edges, get vertices in logical order
+def get_track_vertices_rec(bm,obdata,start_vert,track_vg,fwd,side,count,out):
+    # end of processing
+    if count<0:
+        return
+    out.append(start_vert)
+    # connected verts + switch between bmvert/vert :[
+    bm_start_vert = bm.verts[start_vert.index]
+    for v in [obdata.vertices[e.other_vert(bm_start_vert).index] for e in bm_start_vert.link_edges]:
+        if track_vg.index in [vg.group for vg in v.groups]:
+            # direction?
+            next_fwd = v.co - start_vert.co
+            if fwd.dot(next_fwd)>0:
+                # print("found: {}".format(v.index))
+                get_track_vertices_rec(bm,obdata,v,track_vg,next_fwd,side,count-1,out)
+                break
+
+# 
+def get_track_vertices(obcontext,side):
+    obdata = obcontext.data
+    bm = bmesh.new()
+    bm.from_mesh(obdata)
+    bm.verts.ensure_lookup_table()
+
+    out = []
+
+    # get first vertex (e.g. last checkpoint)
+    chkpt_vg = obcontext.vertex_groups.get('CHECKPT_{}_2'.format(side))
+    if chkpt_vg is not None:
+        start_vert = [v for v in obcontext.data.vertices if chkpt_vg.index in [ vg.group for vg in v.groups ]][0]
+        track_vg = obcontext.vertex_groups.get('TRACK_{}'.format(side))
+        vert_count = len([v for v in obcontext.data.vertices if track_vg.index in [ vg.group for vg in v.groups ]])
+        # all tracks are starting 'fwd'
+        fwd = Vector((0,1,0))
+        get_track_vertices_rec(bm,obdata,start_vert,track_vg,fwd,side,vert_count-1,out)
+    return out
+   
+def export_track_segments(obcontext):
+    right_track = get_track_vertices(obcontext,'R')
+    left_track = get_track_vertices(obcontext,'L')
+    rlen = len(right_track)
+    llen = len(left_track)
+    if rlen!=llen:
+        raise Exception('Right/left track length mismatch: {} vs. {}'.format(rlen,llen))
+
+    # export pairs
+    s = pack_variant(rlen)
+    for i in range(0,rlen):
+        rv = right_track[i]
+        lv = left_track[i]
+        s += "{}{}".format(pack_variant(lv.index+1),pack_variant(rv.index+1))
+    
+    # export checkpoints
+    checkpoints=[]
+    for i in range(0,3):
+        chkpt_name = 'CHECKPT_R_{}'.format(i)
+        chkpt_vg = obcontext.vertex_groups.get(chkpt_name)
+        for i in range(0,rlen):
+            v = right_track[i]
+            if chkpt_vg.index in [ vg.group for vg in v.groups ]:
+                print("found checkpoint segment: {}".format(i))
+                checkpoints.append(i)
+                break
+    print("found {} checkpoints".format(len(checkpoints)))
+    s += pack_variant(len(checkpoints))
+    for i in checkpoints:
+        s += pack_variant(i)
+       
+    return s   
 
 # ---------------------------------------------------------
 # main
@@ -414,17 +470,12 @@ track_data += "{:02x}".format(sky_color*16+horiz_color)
 plyr = [o for o in scene.objects if o.name == 'plyr'][0]
 track_data += "{}{}{}".format(pack_double(plyr.location.x), pack_double(plyr.location.z), pack_double(plyr.location.y))
 
-# export checkpoints
-track_data += export_checkpoints()
-
-# export npc track
-obcontext = [o for o in scene.objects if o.name=='ai_path'][0]
-spline = obcontext.data.splines[0]
-track_data += export_spline(spline)
-
-# select first mesh object
+# select track data object
 obcontext = [o for o in scene.objects if o.name == 'track'][0]
 track_data += export_object(obcontext)
+
+# export track segments + checkpoints
+track_data += export_track_segments(obcontext)
 
 with open(args.out, 'w') as f:
     f.write(track_data)
