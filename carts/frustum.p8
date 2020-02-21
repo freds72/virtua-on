@@ -510,7 +510,7 @@ function make_car(model_name,lod_id,p,angle,track)
 	local velocity,angularv={0,0,0},0
 	local forces,torque={0,0,0},0
 
-	local is_braking,max_rpm,steering_angle,total_r=false,0.6,0,0
+	local max_rpm,steering_angle,total_r=0.6,0,0
 
 	-- model for skidmarks (if any)
 	local model=lod_id and all_models[model_name].lods[lod_id]
@@ -600,8 +600,7 @@ function make_car(model_name,lod_id,p,angle,track)
 		get_speed=function(self)
 			return 300*3.6*(v_dot(velocity,velocity)^0.5)
 		end,
-		steer=function(self,steering_dt,rpm)
-			is_braking=rpm<0
+		steer=function(self,steering_dt,rpm,braking)
 			steering_angle+=mid(steering_dt,-0.2,0.2)
 
 			-- longitudinal slip ratio
@@ -621,6 +620,9 @@ function make_car(model_name,lod_id,p,angle,track)
 				rpm*=lerp(0.9,1,effective_rps/rps)
 			end
 
+			if braking then
+				v_scale(velocity,0.9)
+			end
 			v_scale(fwd,rpm*sr)			
 
 			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
@@ -699,6 +701,11 @@ function make_car(model_name,lod_id,p,angle,track)
 			local fwd=m_fwd(self.m)
 			total_r+=v_dot(fwd,velocity)/0.2638
 			self:update_parts(total_r,steering_angle)
+		end,
+		angle_to=function(self,tgt)
+			local a=(atan2(tgt[1]-self.pos[1],tgt[3]-self.pos[3])-angle)%1
+			if(a<0.5) a=1-a
+			return a
 		end
 	}	
 end
@@ -852,9 +859,26 @@ function make_track(segments,segment)
 	}
 end
 
+function make_pid(p,i,d)
+	local i_err,prev_err
+	p,i,d=p or 2,i or 1,d or 0.5
+	return function(cur,tgt,dt)
+		local err=tgt-cur
+		--if(err>0.5) err=0.5-err
+		--err=0.5-err
+		-- fresh?
+		prev_err=prev_err or err
+		i_err=(1-dt)*(i_err or err)+dt*err
+		local d_err=(err-prev_err)/dt
+		prev_err=err
+		return p*err+i*i_err+d*d_err
+	end
+end	
+
 function make_npc(p,angle,track)	
 	local body=make_car("car_ai",nil,p,angle,track)
 	local rpm=0.6
+	local pid=make_pid()
 
 	-- return world position p in local space (2d)
 	local function inv_apply(self,target)
@@ -865,31 +889,40 @@ function make_npc(p,angle,track)
 
 	body.control=function(self)
 		local fwd=m_fwd(self.m)
-		-- lookahead according to current "acceleration"
-		local lookahead=flr(2*rpm/0.6)+1
+		local lookahead,curve,tgt=1,0
+		while lookahead<5 do
+			local n1,l1,r1=track:get_next(lookahead)
+			local n2,l2,r2=track:get_next(lookahead+1)
+			local len1,len2=track:get_length(lookahead)
 
-		local n1,l1,r1=track:get_next(lookahead)
-		local n2,l2,r2=track:get_next(lookahead+1)
-		local len1,len2=track:get_length(lookahead)
-		-- find track target point based on curvature		
-		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
-		-- is target far away from forward direction?
-		local curve=v_dot(fwd,v_normz(make_v(self.pos,tgt)))
-		if curve<0.95 then
-			rpm=max(0.1,rpm-0.2)
-		else
-			-- accelerate
-			rpm+=0.05
+			-- accumulate "curvature"
+			curve+=abs(1-len1/len2)
+			-- find track target point based on curvature		
+			tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+			
+			-- intersect?
+			n1=make_v(r1,l1)
+			local v=v_normz(make_v(self.pos,tgt))
+			local t=v2_cross(make_v(self.pos,l1),v)/v2_cross(n1,v)
+			if t>0.8 or t<0.2 then
+				break
+			end
+			lookahead+=1
 		end
-
+		
 		-- default: steer to track
-		local target=inv_apply(self,tgt)
-		local target_angle=atan2(target[1],target[3])
+		--local target=inv_apply(self,tgt)
+		local target_angle=self:angle_to(tgt)--atan2(target[1],target[3])
+		-- ortho angle + pid
+		target_angle=pid(0,0.75-target_angle,1/30)
 
-		-- shortest angle
-		if(target_angle<0.5) target_angle=1-target_angle
-		target_angle=0.75-target_angle
-		rpm=self:steer(4*target_angle,rpm)
+		local brake
+		if abs(target_angle)>0.12 then
+			brake=true
+		end
+		rpm=0.6
+
+		rpm=self:steer(4*target_angle,rpm,brake)
 	end
 	body.update_parts=function(self,total_r,steering_angle)
 		local wheel_m=make_m_from_euler(total_r,0,0)
@@ -899,7 +932,7 @@ function make_npc(p,angle,track)
 	local body_update=body.update
 	body.update=function(self)
 		body_update(self)
-		rpm*=0.92
+		rpm*=0.93
 	end
 
 	-- wrapper
