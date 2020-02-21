@@ -344,7 +344,7 @@ function make_cam(scale)
 	}
 end
 
-local cam=make_cam(6)
+local cam=make_cam(12)
 function make_skidmarks()
 	local skidmarks={}
 	local t=0
@@ -609,7 +609,7 @@ function make_plyr(p,a,track)
 
 		-- accelerate
 		if btn(4) then
-			rpm=rpm+0.1
+			rpm+=0.1
 		end
 
 		rpm=self:steer(da/8,rpm,btn(5))
@@ -626,26 +626,58 @@ end
 local npcs={}
 local actors={}
 
-function make_npc(p,angle,track)	
+function make_pid(p,i,d)
+	local i_err,prev_err
+	p,i,d=p or 2,i or 1,d or 0.5
+	return function(cur,tgt,dt)
+		local err=tgt-cur
+		--if(err>0.5) err=0.5-err
+		--err=0.5-err
+		-- fresh?
+		prev_err=prev_err or err
+		i_err=(1-dt)*(i_err or err)+dt*err
+		local d_err=(err-prev_err)/dt
+		prev_err=err
+		return p*err+i*i_err+d*d_err
+	end
+end	
+
+function make_npc(p,angle,track,ai)	
 	local body=make_car(p,angle,track)
 	local rpm=0.6
+	local pid=make_pid()
 
 	local body_draw,body_update=body.draw,body.update
 	body.draw=function(self)
-		local lookahead=flr(3*rpm/0.5)+1
 
-		local n1,l1,r1=track:get_next(lookahead)
-		local n2,l2,r2=track:get_next(lookahead+1)
-		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
-		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+		local x0,y0=cam:project(self.pos)
 
-		local curve=v_dot(m_fwd(self.m),v_normz(make_v(self.pos,tgt)))
+		local lookahead,tgt=1
+		local curve=0
+		while lookahead<6 do
+			local n1,l1,r1=track:get_next(lookahead)
+			local n2,l2,r2=track:get_next(lookahead+1)
+			local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
+			curve+=abs(1-len1/len2)
+			-- find track target point based on curvature		
+			tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+			
+			-- intersect?
+			n1=make_v(r1,l1)
+			local v=v_normz(make_v(self.pos,tgt))
+			local t=v2_cross(make_v(self.pos,l1),v)/v2_cross(n1,v)
 
-		local x,y=cam:project(self.pos)
-		local x1,y1=cam:project(tgt)
-		line(x,y,x1,y1,2)
+			local x1,y1=cam:project(tgt)
+			if t>0.8 or t<0.2 then
+				line(x0,y0,x1,y1,8)
+				break
+			end
+			line(x0,y0,x1,y1,11)
 
-		print(rpm.."\nlk:"..lookahead.."\nc:"..track:get_v(),x+3,y,5)
+			lookahead+=1
+		end
+
+		print(rpm.."\nlk:"..lookahead.."\nc:"..curve,x0+3,y0,5)
 
 		body_draw(self)
 	end
@@ -675,26 +707,87 @@ function make_npc(p,angle,track)
 		-- lookahead
 		-- curve: slow down
 		-- 5 ok
-		local lookahead=flr(3*rpm/0.5)+1
-
-		local n1,l1,r1=track:get_next(lookahead)
-		local n2,l2,r2=track:get_next(lookahead+1)
-		local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
-		-- find track target point based on curvature		
-		local tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
-		local curve=v_dot(fwd,v_normz(make_v(self.pos,tgt)))
-		local brake
-		if curve<0.95 then
-			brake=true
-			rpm=max(0.1,rpm-0.1)
-		else
-			-- accelerate
-			rpm+=0.05
+		local lookahead,tgt=1
+		local curve=0
+		while lookahead<5 do
+			local n1,l1,r1=track:get_next(lookahead)
+			local n2,l2,r2=track:get_next(lookahead+1)
+			local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
+			-- accumulate "curvature"
+			curve+=abs(1-len1/len2)
+			-- find track target point based on curvature		
+			tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
+			
+			-- intersect?
+			n1=make_v(r1,l1)
+			local v=v_normz(make_v(self.pos,tgt))
+			local t=v2_cross(make_v(self.pos,l1),v)/v2_cross(n1,v)
+			if t>0.8 or t<0.2 then
+				break
+			end
+			lookahead+=1
 		end
 		
 		-- default: steer to track
-		local target=inv_apply(self,tgt)
-		local target_angle=atan2(target[1],target[3])
+		--local target=inv_apply(self,tgt)
+		local target_angle=self:angle_to(tgt)--atan2(target[1],target[3])
+		-- ortho angle + pid
+		target_angle=pid(0,0.75-target_angle,1/30)
+		self.target_angle=target_angle
+
+		local brake
+		--[[
+		if abs(target_angle)>lerp(0.08,0.005,curve/2) then
+			brake=true
+			-- rpm=0.1
+			-- rpm=max(0.2,rpm-0.05)
+		else
+			-- accelerate
+		end
+		]]
+		if ai==1 then			
+			if abs(target_angle)>0.12 then
+				brake=true
+			end
+			rpm=0.6*lerp(0.8,1,lookahead/5)
+		elseif ai==2 then
+			if abs(target_angle)>0.18 then
+				brake=true
+			end
+			rpm=0.6*abs(1-curve/2)*lerp(0.8,1,lookahead/5)
+		elseif ai==3 then
+			curve=0
+			for i=1,4 do
+				local n1,l1,r1=track:get_next(i)
+				local n2,l2,r2=track:get_next(i+1)
+				local len1,len2=v_len(make_v(l1,l2)),v_len(make_v(r1,r2))
+				-- accumulate "curvature"
+				curve+=abs(1-len1/len2)
+			end
+		
+			if abs(target_angle)>0.18 then
+				brake=true
+			end
+			rpm=0.6*lerp(0.8,1,lookahead/5)*lerp(0.5,1,curve/2)
+		end
+
+		-- heavy curve ahead?
+		--[[
+		if abs(len1/len2)<0.8 or abs(len1/len2)>1.2 then
+			len1,len2=0,0
+			for i=lookahead,lookahead+5 do
+				local n1,l1,r1=track:get_next(i)
+				local n2,l2,r2=track:get_next(i+1)
+				len1+=v_len(make_v(l1,l2))
+				len2+=v_len(make_v(r1,r2))
+			end
+			if abs(len1/len2)<0.8 or abs(len1/len2)>1.2 then
+				brake=true
+				rpm=max(0.1,rpm-0.05)
+			end
+		end
+		]]
+
 
 		-- avoid collisions
 		--[[
@@ -731,14 +824,13 @@ function make_npc(p,angle,track)
 		end
 		]]
 
-		-- shortest angle
-		if(target_angle<0.5) target_angle=1-target_angle
-		target_angle=0.75-target_angle
-		rpm=self:steer(4*target_angle,rpm,brake)
+		
+		-- self.tgt_angle=pid(0,target_angle,1/30)
+		rpm=self:steer(target_angle,rpm,brake)
 	end
 	body.update=function(self)
 		body_update(self)
-		rpm*=0.97
+		rpm*=0.92
 	end
 	return body
 end
@@ -772,6 +864,7 @@ function make_car(p,angle,track,fix_pos)
 
 	local contact_offsets={0.250,-0.250}
 	return {
+		track=track,
 		pos=v_clone(p),
 		m=make_m_from_euler(0,a,0),
 		-- obj to world space
@@ -888,11 +981,12 @@ function make_car(p,angle,track,fix_pos)
 			]]
 			
 			if is_braking then
-				fwd=v_add(fwd,fwd,-0.9*v_dot(fwd,fwd))
+				v_scale(velocity,0.9)
+				--fwd=v_add(fwd,fwd,-0.9*v_dot(fwd,fwd))
 			end
 			v_scale(fwd,rpm*sr)		
 			
-			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
+			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,1,rpm/max_rpm))
 
 			-- rear wheels sliding?
 			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6
@@ -903,6 +997,11 @@ function make_car(p,angle,track,fix_pos)
 			steering_angle*=0.8
 			-- correct position
 			track:update(self.pos,m_fwd(self.m),fix_pos)
+		end,
+		angle_to=function(self,tgt)
+			local a=(atan2(tgt[1]-self.pos[1],tgt[3]-self.pos[3])-angle)%1
+			if(a<0.5) a=1-a
+			return a
 		end
 	}	
 end
@@ -939,19 +1038,17 @@ function _init()
 	local n,l,r=plyr_track:get_next()
 	l=v_add(l,r)
 	v_scale(l,0.5)
-	plyr=make_plyr(l,0,plyr_track)
+	--plyr=make_plyr(l,0,plyr_track)
 
 	add(actors,plyr)
 
-	for i=1,8 do
-		local npc_track=make_track(fixed_tracks,2*i)
+	for i=1,1 do
+		local npc_track=make_track(fixed_tracks,1)
 		if(not static_track) static_track=npc_track
 		local _,l,r=npc_track:get_next()
 		l=v_add(l,r)
 		v_scale(l,0.5)
-		--p[1]+=(1-rnd(2))
-		--p[3]+=(1-rnd(2))
-		add(actors,add(npcs, make_npc(l,0,npc_track)))
+		add(actors,add(npcs, make_npc(l,0,npc_track,1)))
 	end
 end
 
