@@ -621,7 +621,8 @@ function make_car(model_name,lod_id,p,angle,track)
 				rpm*=lerp(0.9,1,effective_rps/rps)
 			end
 
-			v_scale(fwd,rpm*sr)			
+			-- todo: move velocity scale out
+			v_scale(fwd,1.1*rpm*sr)			
 
 			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
 
@@ -973,15 +974,19 @@ function start_state()
 	-- reset cam	
 	cam=make_cam()
 
-	-- npcs
+	--[[
 	for i=0,6 do
 		local npc_track=make_track(track.segments,5*i)
 		local _,l,r=npc_track:get_next()
 		l=v_add(l,r)
 		v_scale(l,0.5)
-		add(actors,add(npcs, make_npc(l,0,npc_track)))
+		local npc=add(actors,add(npcs, make_npc(l,0,npc_track)))
+		-- some color variety!
+		npc.colors={
+			[0x1033.a5a5]=bor(0x1000.a5a5,peek(52+shl(i%4,6))),
+			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(53+shl(i%4,6)))}
 	end
-
+	]]
 	local ttl=90 -- 3*30
 
 	return 
@@ -1010,7 +1015,7 @@ function play_state(checkpoints)
 	local laps={}
 
 	-- remaining time before game over (+ some buffer time)
-	local lap_t,total_t,remaining_t,best_t,best_i=0,0,30*65,32000,1
+	local lap_t,total_t,remaining_t,best_t,best_i=0,0,30*75,32000,1
 	local extend_time_t=0
 
 	-- go display
@@ -1176,7 +1181,7 @@ function _init()
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=2
+		track_id=0
 	end
 	
 	-- load regular 3d models
@@ -1240,7 +1245,7 @@ local v_cache_cls={
 	end
 }
 
-function collect_faces(faces,cam_pos,v_cache,out)
+function collect_faces(faces,cam_pos,v_cache,out,colors)
 	local sessionid=sessionid
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
@@ -1263,6 +1268,8 @@ function collect_faces(faces,cam_pos,v_cache,out)
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
 					verts.f=face
+					-- color replace
+					verts.c=colors and colors[face.c] or face.c
 					verts.key=ni/(y*y+z*z)
 					out[#out+1]=verts
 				end
@@ -1299,7 +1306,7 @@ function collect_model_faces(model,m,parts,out)
 	local p=setmetatable({m=m,v=model.v},v_cache_cls)
 
 	-- main model
-	collect_faces(model.f,cam_pos,p,out)
+	collect_faces(model.f,cam_pos,p,out,parts.colors)
 	-- sub models
 	local m_orig,m_base=m_clone(m),m_clone(m) 
 	
@@ -1334,7 +1341,7 @@ function draw_faces(faces,v_cache)
 	for i=1,#faces do
 		local d=faces[i]
 		local main_face=d.f
-		polyfill(d,main_face.c)
+		polyfill(d,d.c)
 		-- details?
 		if d.key>0.0200 then
 			-- face details
@@ -1549,7 +1556,7 @@ function unpack_models()
 	-- for all models
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
-		scale=1/32
+		scale=1/28
 		unpack_array(function()
 			local d=unpack_double()
 			assert(d<127,"lod distance too large:"..d)
@@ -1849,14 +1856,14 @@ end
 ]]
 
 __gfx__
-00000000cccccccccccccccccccccccceeeee00000ee0eeeeeeee00000eeeeeeeeeeeee0eeeeeeee000000eeeeeeee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cccccc7777cccccccccccccceeee0888880080eeeee008888800eeeeeeeeee080eeeeee08888880eeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000ccccc7777777cccccccccccceee08800008880eeee08800000880eeeeeeee0880eeeeeee008800eeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cccc777777777cccccccccccee0800eeee0880eee0880eeeee0880eeeeeee08880eeeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cc777777777777cccccccccce0880eeeeee080eee0880eeeee0880eeeeee080880eeeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000c7777777777777cccccccccce080eeeeeeee0eee0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000c77777777777777ccccccccc0880eeeee000000e0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-000000007777777777777777cccccccc0880eeee088888800880eeeeeee0880eeee080e0880eeeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+00000000cccccccccccccccccccccccceeeee00000ee0eeeeeeee00000eeeeeeeeeeeee0eeeeeeee000000eeeeeeee00eeeeeeee33bb0000eeeeeeeeeeeeeeee
+00000000cccccc7777cccccccccccccceeee0888880080eeeee008888800eeeeeeeeee080eeeeee08888880eeeeee0880eeeeeee22880000eeeeeeeeeeeeeeee
+00000000ccccc7777777cccccccccccceee08800008880eeee08800000880eeeeeeee0880eeeeeee008800eeeeeee0880eeeeeee99aa0000eeeeeeeeeeeeeeee
+00000000cccc777777777cccccccccccee0800eeee0880eee0880eeeee0880eeeeeee08880eeeeeee0880eeeeeeee0880eeeeeee11cc0000eeeeeeeeeeeeeeee
+00000000cc777777777777cccccccccce0880eeeeee080eee0880eeeee0880eeeeee080880eeeeeee0880eeeeeeee0880eeeeeee00000000eeeeeeeeeeeeeeee
+00000000c7777777777777cccccccccce080eeeeeeee0eee0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeee00000000eeeeeeeeeeeeeeee
+00000000c77777777777777ccccccccc0880eeeee000000e0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeee00000000eeeeeeeeeeeeeeee
+000000007777777777777777cccccccc0880eeee088888800880eeeeeee0880eeee080e0880eeeeee0880eeeeeeee080eeeeeeee00000000eeeeeeeeeeeeeeee
 cccccccc77777777cccccccc000000000880eeeee008800e0880eeeeeee0880eeee080000880eeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 cccccccc77777777cccccccc000000000880eeeeee0880ee0880eeeeeee0880eee0888888880eeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 cccccccc7777777777777777000000000880eeeeee0880ee0880eeeeeee0880eee0800000880eeeee0880eeeeee0e080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
@@ -1865,22 +1872,22 @@ c6c6c6c6777777777777777777770000e08880eeee0880eee0880eeeee0880eee080eeeee0880eee
 6c6c6c6c777777777777777777777700ee088800008880eeee08800000880eee0880eeeee08880ee008800000880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 66666666777777777777777777777770eee0088888800eeeeee008888800eee088880eee08888800888888888880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 77777777777777777777777777777777eeeee000000eeeeeeeeee00000eeeeee0000eeeee00000ee00000000000eee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-111111111111111133333333cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeedddddddd33333333cccccccc
-c1c1c1c1ffffffff33333333cccccc33eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee4949494933333333cccccc43
-11111111f3f3f3f333333333ccccc333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea4a4a4a433333333cccc4434
-111111113f3f3f3f33333333cccc3333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbbbbbbb33333333ccc44443
-111c111c3333333333333333cc333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333cc434434
-111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebcbcbcbc33333333cc444343
-111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333c4343433
-11111c11333333333333333333333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc3333333343433333
-1111111111111111c1c1c1c1cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee33ffffffcccccccccccccccc
-11c11111111111111c1c1c1c3bcccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeffffffffcccccccc77777777
-1c1c111111111111c1c1c1c133bbcccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeefffffffffffcccff66666666
-11111111111111111c1c1c1c3bbbbccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7a7a7a7a7aaaaaaacccccccc
-1111111111111111c1c1c1c133bb3bcceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7777777777aaaaa7cccccccc
-11111111111111111c1c1c1c3333bbcceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1ccccccccc
-11111c1111111111c1c1c1c1333333bceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeec1c1c1c1c1c1c1c1cccccccc
-1111c1c1111111111c1c1c1c3333333beeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1ccccccccc
+111111111111111133333333cccccccc00000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeedddddddd33333333cccccccc
+c1c1c1c1ffffffff33333333cccccc3300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee4949494933333333cccccc43
+11111111f3f3f3f333333333ccccc33300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea4a4a4a433333333cccc4434
+111111113f3f3f3f33333333cccc333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbbbbbbb33333333ccc44443
+111c111c3333333333333333cc33333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333cc434434
+111111113333333333333333c333333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebcbcbcbc33333333cc444343
+111111113333333333333333c333333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333c4343433
+11111c1133333333333333333333333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc3333333343433333
+1111111111111111c1c1c1c1cccccccc3b000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee33ffffffcccccccccccccccc
+11c11111111111111c1c1c1c3bcccccc28000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeffffffffcccccccc77777777
+1c1c111111111111c1c1c1c133bbcccc9a000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeefffffffffffcccff66666666
+11111111111111111c1c1c1c3bbbbccc1c000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7a7a7a7a7aaaaaaacccccccc
+1111111111111111c1c1c1c133bb3bcc00000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7777777777aaaaa7cccccccc
+11111111111111111c1c1c1c3333bbcc00000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1ccccccccc
+11111c1111111111c1c1c1c1333333bc00000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeec1c1c1c1c1c1c1c1cccccccc
+1111c1c1111111111c1c1c1c3333333b00000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1ccccccccc
 eeeee00eeeeeeeee0000eeeeeeee0000eeeeeeeeeeee0000eee0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
 eee00770eeeeeee077770eeeeee077770eeeeeeeeee0777700070eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
 ee077770eeeeee07777770eeee07007770eeeeeeee07700007770eeeee000000eeeeee00ee00e0000eeeeeee00000eee00000000000000000000000000000000
