@@ -323,7 +323,7 @@ function make_cam()
 	local view_pov={
 		{z=-1.65,y=1.125,lag=0.2,znear=1,dist=2.1},
 		{z=-0.7,y=0.3,lag=0.1,znear=0.25,dist=1},
-		{z=-0.01,y=0.1,lag=0.6,znear=0.05,dist=2.1}
+		{z=-0.01,y=0.11,lag=0.6,znear=0.05,dist=2.1}
 	}
 
 	local current_pov=view_pov[view_mode+1]
@@ -621,6 +621,7 @@ function make_car(model_name,lod_id,p,angle,track)
 			end
 
 			if braking then
+				-- todo: take into account sr
 				v_scale(velocity,0.9)
 			end
 			v_scale(fwd,rpm*sr)			
@@ -876,9 +877,8 @@ function make_pid(p,i,d)
 end	
 
 function make_npc(p,angle,track)	
-	local body=make_car("car_ai",nil,p,angle,track)
+	local body,pid=make_car("car_ai",nil,p,angle,track),make_pid()
 	local rpm=0.6
-	local pid=make_pid()
 
 	-- return world position p in local space (2d)
 	local function inv_apply(self,target)
@@ -920,7 +920,7 @@ function make_npc(p,angle,track)
 		if abs(target_angle)>0.12 then
 			brake=true
 		end
-		rpm=0.6
+		rpm=0.6*lerp(0.8,1,1-curve/1.6)
 
 		rpm=self:steer(4*target_angle,rpm,brake)
 	end
@@ -1006,13 +1006,17 @@ function start_state()
 	-- reset cam	
 	cam=make_cam()
 
-	-- npcs
 	for i=0,6 do
 		local npc_track=make_track(track.segments,5*i)
 		local _,l,r=npc_track:get_next()
 		l=v_add(l,r)
 		v_scale(l,0.5)
-		add(actors,add(npcs, make_npc(l,0,npc_track)))
+		local npc=add(actors,add(npcs, make_npc(l,0,npc_track)))
+		-- some color variety!
+		local mem=52+shl(i%4,6)
+		npc.colors={
+			[0x1033.a5a5]=bor(0x1000.a5a5,peek(mem)),
+			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 	end
 
 	local ttl=90 -- 3*30
@@ -1043,7 +1047,7 @@ function play_state(checkpoints)
 	local laps={}
 
 	-- remaining time before game over (+ some buffer time)
-	local lap_t,total_t,remaining_t,best_t,best_i=0,0,30*65,32000,1
+	local lap_t,total_t,remaining_t,best_t,best_i=0,0,30*75,32000,1
 	local extend_time_t=0
 
 	-- go display
@@ -1099,18 +1103,22 @@ function play_state(checkpoints)
 			-- draw npc path
 			local x0,y0=track_project(track_outline[#track_outline-3],pos,cc,ss)
 			color(0)
-			for i=1,#track_outline,5 do
+			for i=1,#track_outline,10 do
 				local x1,y1=track_project(track_outline[i+1],pos,cc,ss)
 				line(x0,y0,x1,y1)
 				x0,y0=x1,y1
 			end
+			palt(14,true)
+			palt(0,false)
 			-- draw other cars
-			for _,npc in pairs(npcs) do
+			for i,npc in pairs(npcs) do
 				local x0,y0=track_project(npc.pos,pos,cc,ss)
-				circfill(x0,y0,1.5,0x99)
+				spr(37+(i%4),x0-2,y0-2)
 			end
 			-- player
-			circfill(44,0,1,0x88)
+			-- circfill(44,0,1,0x88)
+			spr(53,40,-4)
+			palt()
 		end,
 		-- update
 		function()
@@ -1209,7 +1217,7 @@ function _init()
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=2
+		track_id=0
 	end
 	
 	-- load regular 3d models
@@ -1273,7 +1281,7 @@ local v_cache_cls={
 	end
 }
 
-function collect_faces(faces,cam_pos,v_cache,out)
+function collect_faces(faces,cam_pos,v_cache,out,colors)
 	local sessionid=sessionid
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
@@ -1296,6 +1304,8 @@ function collect_faces(faces,cam_pos,v_cache,out)
 				if(is_clipped>0) verts=z_poly_clip(z_near,verts)
 				if #verts>2 then
 					verts.f=face
+					-- color replace
+					verts.c=colors and colors[face.c] or face.c
 					verts.key=ni/(y*y+z*z)
 					out[#out+1]=verts
 				end
@@ -1332,7 +1342,7 @@ function collect_model_faces(model,m,parts,out)
 	local p=setmetatable({m=m,v=model.v},v_cache_cls)
 
 	-- main model
-	collect_faces(model.f,cam_pos,p,out)
+	collect_faces(model.f,cam_pos,p,out,parts.colors)
 	-- sub models
 	local m_orig,m_base=m_clone(m),m_clone(m) 
 	
@@ -1367,7 +1377,7 @@ function draw_faces(faces,v_cache)
 	for i=1,#faces do
 		local d=faces[i]
 		local main_face=d.f
-		polyfill(d,main_face.c)
+		polyfill(d,d.c)
 		-- details?
 		if d.key>0.0200 then
 			-- face details
@@ -1382,7 +1392,7 @@ function draw_faces(faces,v_cache)
 				local m=v_cache.m
 				for _,skids in pairs(main_face.skidmarks) do
 					local s_cache=setmetatable({m=v_cache.m,v=skids},v_cache_cls)
-					draw_face(s_cache[1],s_cache[2],s_cache[3],s_cache[4],0)
+					draw_face(s_cache[1],s_cache[2],s_cache[4],s_cache[3],0x1150.a5a5)
 				end
 			end
 		end
@@ -1518,6 +1528,7 @@ end
 
 function unpack_face()
 	local f={flags=unpack_int(),c=unpack_int(),session=0xffff}
+	-- shadows
 	if(f.c==0x50) f.c=0x0150
 	f.c+=0x1000.a5a5
 
@@ -1582,7 +1593,7 @@ function unpack_models()
 	-- for all models
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
-		scale=1/32
+		scale=1/28
 		unpack_array(function()
 			local d=unpack_double()
 			assert(d<127,"lod distance too large:"..d)
@@ -1882,38 +1893,38 @@ end
 ]]
 
 __gfx__
-00000000cccccccccccccccccccccccceeeee00000ee0eeeeeeee00000eeeeeeeeeeeee0eeeeeeee000000eeeeeeee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cccccc7777cccccccccccccceeee0888880080eeeee008888800eeeeeeeeee080eeeeee08888880eeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000ccccc7777777cccccccccccceee08800008880eeee08800000880eeeeeeee0880eeeeeee008800eeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cccc777777777cccccccccccee0800eeee0880eee0880eeeee0880eeeeeee08880eeeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000cc777777777777cccccccccce0880eeeeee080eee0880eeeee0880eeeeee080880eeeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000c7777777777777cccccccccce080eeeeeeee0eee0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-00000000c77777777777777ccccccccc0880eeeee000000e0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-000000007777777777777777cccccccc0880eeee088888800880eeeeeee0880eeee080e0880eeeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-cccccccc77777777cccccccc000000000880eeeee008800e0880eeeeeee0880eeee080000880eeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-cccccccc77777777cccccccc000000000880eeeeee0880ee0880eeeeeee0880eee0888888880eeeee0880eeeeeeee080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-cccccccc7777777777777777000000000880eeeeee0880ee0880eeeeeee0880eee0800000880eeeee0880eeeeee0e080eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-cccccccc777777777777777700000000e0880eeeee0880eee0880eeeee0880eee080eeeee0880eeee0880eeeee080e0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-c6c6c6c6777777777777777777770000e08880eeee0880eee0880eeeee0880eee080eeeee0880eeee0880eeee0880e00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-6c6c6c6c777777777777777777777700ee088800008880eeee08800000880eee0880eeeee08880ee008800000880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-66666666777777777777777777777770eee0088888800eeeeee008888800eee088880eee08888800888888888880e0880eeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-77777777777777777777777777777777eeeee000000eeeeeeeeee00000eeeeee0000eeeee00000ee00000000000eee00eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-111111111111111133333333cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeedddddddd33333333cccccccc
-c1c1c1c1ffffffff33333333cccccc33eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee4949494933333333cccccc43
-11111111f3f3f3f333333333ccccc333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeea4a4a4a433333333cccc4434
-111111113f3f3f3f33333333cccc3333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebbbbbbbb33333333ccc44443
-111c111c3333333333333333cc333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333cc434434
-111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeebcbcbcbc33333333cc444343
-111111113333333333333333c3333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc33333333c4343433
-11111c11333333333333333333333333eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeecccccccc3333333343433333
-1111111111111111c1c1c1c1cccccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee33ffffffcccccccccccccccc
-11c11111111111111c1c1c1c3bcccccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeffffffffcccccccc77777777
-1c1c111111111111c1c1c1c133bbcccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeefffffffffffcccff66666666
-11111111111111111c1c1c1c3bbbbccceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7a7a7a7a7aaaaaaacccccccc
-1111111111111111c1c1c1c133bb3bcceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee7777777777aaaaa7cccccccc
-11111111111111111c1c1c1c3333bbcceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1ccccccccc
-11111c1111111111c1c1c1c1333333bceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeec1c1c1c1c1c1c1c1cccccccc
-1111c1c1111111111c1c1c1c3333333beeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee1c1c1c1c1c1c1c1ccccccccc
+00000000cccccccccccccccccccccccceeeee00000ee0eeeeeeee00000eeeeeeeeeeeee0eeeeeeee000000eeeeeeee00eeeeeeee33bb00000000000000000000
+00000000cccccc7777cccccccccccccceeee0888880080eeeee008888800eeeeeeeeee080eeeeee08888880eeeeee0880eeeeeee228800000000000000000000
+00000000ccccc7777777cccccccccccceee08800008880eeee08800000880eeeeeeee0880eeeeeee008800eeeeeee0880eeeeeee99aa00000000000000000000
+00000000cccc777777777cccccccccccee0800eeee0880eee0880eeeee0880eeeeeee08880eeeeeee0880eeeeeeee0880eeeeeee11cc00000000000000000000
+00000000cc777777777777cccccccccce0880eeeeee080eee0880eeeee0880eeeeee080880eeeeeee0880eeeeeeee0880eeeeeee000000000000000000000000
+00000000c7777777777777cccccccccce080eeeeeeee0eee0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeee000000000000000000000000
+00000000c77777777777777ccccccccc0880eeeee000000e0880eeeeeee0880eeeee0800880eeeeee0880eeeeeeee0880eeeeeee000000000000000000000000
+000000007777777777777777cccccccc0880eeee088888800880eeeeeee0880eeee080e0880eeeeee0880eeeeeeee080eeeeeeee000000000000000000000000
+cccccccc77777777cccccccc000000000880eeeee008800e0880eeeeeee0880eeee080000880eeeee0880eeeeeeee080eeeeeeee000000000000000000000000
+cccccccc77777777cccccccc000000000880eeeeee0880ee0880eeeeeee0880eee0888888880eeeee0880eeeeeeee080eeeeeeee000000000000000000000000
+cccccccc7777777777777777000000000880eeeeee0880ee0880eeeeeee0880eee0800000880eeeee0880eeeeee0e080eeeeeeee000000000000000000000000
+cccccccc777777777777777700000000e0880eeeee0880eee0880eeeee0880eee080eeeee0880eeee0880eeeee080e0eeeeeeeee000000000000000000000000
+c6c6c6c6777777777777777777770000e08880eeee0880eee0880eeeee0880eee080eeeee0880eeee0880eeee0880e00eeeeeeee000000000000000000000000
+6c6c6c6c777777777777777777777700ee088800008880eeee08800000880eee0880eeeee08880ee008800000880e0880eeeeeee000000000000000000000000
+66666666777777777777777777777770eee0088888800eeeeee008888800eee088880eee08888800888888888880e0880eeeeeee000000000000000000000000
+77777777777777777777777777777777eeeee000000eeeeeeeeee00000eeeeee0000eeeee00000ee00000000000eee00eeeeeeee000000000000000000000000
+111111111111111133333333cccccccc00000000e00eeeeee00eeeeee00eeeeee00eeeee00000000000000000000000000000000dddddddd33333333cccccccc
+c1c1c1c1ffffffff33333333cccccc33000000000330eeee0220eeee0990eeee0110eeee000000000000000000000000000000004949494933333333cccccc43
+11111111f3f3f3f333333333ccccc333000000000330eeee0220eeee0990eeee0110eeee00000000000000000000000000000000a4a4a4a433333333cccc4434
+111111113f3f3f3f33333333cccc333300000000e00eeeeee00eeeeee00eeeeee00eeeee00000000000000000000000000000000bbbbbbbb33333333ccc44443
+111c111c3333333333333333cc33333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000cccccccc33333333cc434434
+111111113333333333333333c333333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000bcbcbcbc33333333cc444343
+111111113333333333333333c333333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000cccccccc33333333c4343433
+11111c1133333333333333333333333300000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000cccccccc3333333343433333
+1111111111111111c1c1c1c1cccccccc3b000000e0eee0ee0000000000000000000000000000000000000000000000000000000033ffffffcccccccccccccccc
+11c11111111111111c1c1c1c3bcccccc28000000070e070e00000000000000000000000000000000000000000000000000000000ffffffffcccccccc77777777
+1c1c111111111111c1c1c1c133bbcccc9a000000e07070ee00000000000000000000000000000000000000000000000000000000fffffffffffcccff66666666
+11111111111111111c1c1c1c3bbbbccc1c000000ee0e0eee000000000000000000000000000000000000000000000000000000007a7a7a7a7aaaaaaacccccccc
+1111111111111111c1c1c1c133bb3bcc00000000e07070ee000000000000000000000000000000000000000000000000000000007777777777aaaaa7cccccccc
+11111111111111111c1c1c1c3333bbcc00000000070e070e000000000000000000000000000000000000000000000000000000001c1c1c1c1c1c1c1ccccccccc
+11111c1111111111c1c1c1c1333333bc00000000e0eee0ee00000000000000000000000000000000000000000000000000000000c1c1c1c1c1c1c1c1cccccccc
+1111c1c1111111111c1c1c1c3333333b00000000eeeeeeee000000000000000000000000000000000000000000000000000000001c1c1c1c1c1c1c1ccccccccc
 eeeee00eeeeeeeee0000eeeeeeee0000eeeeeeeeeeee0000eee0eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
 eee00770eeeeeee077770eeeeee077770eeeeeeeeee0777700070eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee00000000000000000000000000000000
 ee077770eeeeee07777770eeee07007770eeeeeeee07700007770eeeee000000eeeeee00ee00e0000eeeeeee00000eee00000000000000000000000000000000
