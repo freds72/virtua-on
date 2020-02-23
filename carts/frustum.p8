@@ -598,7 +598,7 @@ function make_car(model_name,lod_id,p,angle,track)
 			end
 		end,
 		get_speed=function(self)
-			return 300*3.6*(v_dot(velocity,velocity)^0.5)
+			return 250*3.6*(v_dot(velocity,velocity)^0.5)
 		end,
 		steer=function(self,steering_dt,rpm,braking)
 			steering_angle+=mid(steering_dt,-0.2,0.2)
@@ -612,7 +612,7 @@ function make_car(model_name,lod_id,p,angle,track)
 			sr=mid(sr,-0.10,0.10)
 			sr=1-abs(sr)/0.40
 			steering_angle*=sr
-
+			
 			local fwd=m_fwd(self.m)
 			local effective_rps=30*v_dot(fwd,velocity)/0.2638
 			local rps=30*rpm*2
@@ -625,8 +625,7 @@ function make_car(model_name,lod_id,p,angle,track)
 				v_scale(velocity,0.9)
 			end
 			v_scale(fwd,rpm*sr)			
-
-			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.25,rpm/max_rpm))
+			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.22,rpm/max_rpm))
 
 			-- rear wheels sliding?
 			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6		
@@ -655,6 +654,7 @@ function make_car(model_name,lod_id,p,angle,track)
 								v_scale(axis,5)
 								-- silly torque - to fix
 								self:apply_force_and_torque(axis,-2*depth*v2_cross({0,0,offset},axis))
+								sfx(5)
 							end
 						end
 					end
@@ -888,7 +888,6 @@ function make_npc(p,angle,track)
 	end
 
 	body.control=function(self)
-		local fwd=m_fwd(self.m)
 		local lookahead,curve,tgt=1,0
 		while lookahead<5 do
 			local n1,l1,r1=track:get_next(lookahead)
@@ -911,16 +910,12 @@ function make_npc(p,angle,track)
 		end
 		
 		-- default: steer to track
-		--local target=inv_apply(self,tgt)
-		local target_angle=self:angle_to(tgt)--atan2(target[1],target[3])
+		local target_angle=self:angle_to(tgt)
 		-- ortho angle + pid
 		target_angle=pid(0,0.75-target_angle,1/30)
 
-		local brake
-		if abs(target_angle)>0.12 then
-			brake=true
-		end
-		rpm=0.6*lerp(0.8,1,1-curve/1.6)
+		local brake=abs(target_angle)>0.12
+		rpm=0.6*lerp(0.8,1,1-curve/1.4)
 
 		rpm=self:steer(4*target_angle,rpm,brake)
 	end
@@ -993,19 +988,16 @@ function next_state(state,...)
 	draw_state,update_state=state(...)
 end
 
-function start_state()
-	-- reset arrays & counters
-	time_t=0
+function play_state(checkpoints)
 
+	--***********
 	-- start over
 	actors,npcs={},{}
 
 	-- reset player
 	plyr=add(actors,make_plyr(track.start_pos,0,make_track(track.segments)))
 
-	-- reset cam	
-	cam=make_cam()
-
+	-- init npc's
 	for i=0,6 do
 		local npc_track=make_track(track.segments,5*i)
 		local _,l,r=npc_track:get_next()
@@ -1017,29 +1009,12 @@ function start_state()
 		npc.colors={
 			[0x1033.a5a5]=bor(0x1000.a5a5,peek(mem)),
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
+		npc.spr=37+(i%4)
 	end
 
-	local ttl=90 -- 3*30
-
-	return 
-		-- draw
-		function()
-			local sx=flr(ttl/30)*12
-			printxl(sx,32,12,16,-14)
-
-			-- todo: allow acceleration during "go"
-			-- todo: boost if acceleration is at frame 15
-		end,
-		-- update
-		function()
-			if(ttl%30==0) sfx(2)
-			ttl-=1
-			if(ttl<0) sfx(3) next_state(play_state,track.checkpoints)
-		end
-end
-
-
-function play_state(checkpoints)
+	-- reset cam	
+	cam=make_cam()
+	
 	-- active index
 	local checkpoint,n=0,#checkpoints
 
@@ -1051,18 +1026,19 @@ function play_state(checkpoints)
 	local extend_time_t=0
 
 	-- go display
-	local go_ttl=30
+	local start_ttl,go_ttl=90,120
 
 	local function track_project(v,pos,cc,ss)
 		local x,y=v[1]-pos[1],v[3]-pos[3]
 		return 44+0.3*(cc*x-ss*y),-0.3*(ss*x+cc*y)
 	end
 	
-	local ranks={"st","nd","rd"}
+
+	local prev_rank,ranks=1,{"st","nd","rd"}
 	return
 		-- draw
 		function()
-			printb("lap time",26,-62,7,0)
+			printb("lap time",31,-62,7,0)
 			printb("time",nil,-62,7,0)
 			printf(tostr(ceil(remaining_t/30)),nil,-55,xlfont)
 			
@@ -1070,8 +1046,14 @@ function play_state(checkpoints)
 			printf(tostr(flr(plyr:get_speed())),-33,50,xlfont)
 			printr("km/h",-32,57,10,9)
 
+			-- 1/2/3...
+			if start_ttl>0 then
+				local sx=flr(start_ttl/30)*12
+				printxl(sx,32,12,16,-14)
+			end
+
 			-- blink go!
-			if(go_ttl>0 and go_ttl%4<2) printxl(0,48,36,16,-14)
+			if(go_ttl>0 and go_ttl<30 and go_ttl%4<2) printxl(0,48,36,16,-14)
 
 			-- extend time message
 			if(extend_time_t>0 and extend_time_t%30<15) printr("extend time",nil,-36,10,4)
@@ -1079,12 +1061,12 @@ function play_state(checkpoints)
 			-- previous times
 			local y=-55
 			for i=1,#laps do
-				printb(i,26,y,9,0)
-				printb(laps[i],34,y,best_i==i and 9 or 7,0)
+				printb(i,23,y,9,0)
+				printb(laps[i],31,y,best_i==i and 9 or 7,0)
 				y+=7
 			end
-			printb(#laps+1,26,y,9,0)
-			printb(time_tostr(lap_t),34,y,7,0)
+			printb(#laps+1,23,y,9,0)
+			printb(time_tostr(lap_t),31,y,7,0)
 			
 			-- ranking
 			local rank,plyr_u=#npcs+1,plyr.track:get_u()
@@ -1093,6 +1075,12 @@ function play_state(checkpoints)
 					rank-=1
 				end
 			end
+			-- assume overtake!
+			if prev_rank!=rank then
+				sfx(6)
+			end
+			-- last rank
+			prev_rank=rank
 			printb("rank",-62,-62,7,0)
 			local x0=printf(tostr(rank),-52,-55,xlfont)
 			printr(ranks[rank] or "th",x0,-53,10,9)
@@ -1113,7 +1101,7 @@ function play_state(checkpoints)
 			-- draw other cars
 			for i,npc in pairs(npcs) do
 				local x0,y0=track_project(npc.pos,pos,cc,ss)
-				spr(37+(i%4),x0-2,y0-2)
+				spr(npc.spr,x0-2,y0-2)
 			end
 			-- player
 			-- circfill(44,0,1,0x88)
@@ -1122,12 +1110,20 @@ function play_state(checkpoints)
 		end,
 		-- update
 		function()
-			total_t+=1
-			remaining_t-=1
 			go_ttl-=1
 			extend_time_t-=1
+
+			if start_ttl>0 then
+				if(start_ttl%30==0) sfx(2)
+				start_ttl-=1
+				if(start_ttl<0) sfx(3)
+			else
+				total_t+=1
+				remaining_t-=1
+			end
+
 			if remaining_t==0 then
-				next_state(gameover_state,false,total_t)
+				next_state(gameover_state,false,total_t,prev_rank)
 				return
 			end
 			lap_t+=1
@@ -1142,7 +1138,7 @@ function play_state(checkpoints)
 				sfx(4)
 				
 				-- closed lap?
-				if checkpoint==#checkpoints then
+				if checkpoint==n then
 					checkpoint=0
 					-- record time
 					add(laps,time_tostr(lap_t))
@@ -1155,7 +1151,7 @@ function play_state(checkpoints)
 					end
 					-- done?
 					if #laps==3 then
-						next_state(goal_state,true,total_t)
+						next_state(gameover_state,true,total_t,prev_rank)
 					end
 					-- next lap
 					lap_t=0
@@ -1163,13 +1159,20 @@ function play_state(checkpoints)
 			end
 
 			cam:update()
-			plyr:control()	
+			if(start_ttl==0) plyr:control()	
 		end
 end
 
-function gameover_state(win,total_t)
-	local ttl=900
-	local angle=-0.5
+function gameover_state(win,total_t,rank)
+	local ttl,angle,prev_best_t=900,-0.5,dget(track.id)	
+	--  or record?
+	local is_record=win and (total_t<prev_best_t or prev_best_t==0)
+	if is_record then
+		-- save new record
+		dset(track.id,total_t)
+	end
+	-- record initial button state (avoid auto-skip screen)
+	local last_btn,btn_press=btn(4),0
 
 	music(gameover_music)
 
@@ -1184,17 +1187,28 @@ function gameover_state(win,total_t)
 			end
 
 			-- total time
-			printb(time_tostr(total_t).." total time",nil,72,9,0)
+			printr(time_tostr(total_t).." total time",nil,8,9)
+			if(is_record) printr("track record!",nil,17,8,2)
 
 			-- 
-			if(ttl%32<16) printb("❎ select track",34,120,9,0) printr("🅾️ start over",37,110,10,4) 
+			if ttl%32<16 then
+				printr("❎ select track",nil,57,9,4)
+			else			
+				printr("🅾️ try again",nil,57,10,9)
+			end
 		end,
 		-- update
 		function()
 			ttl-=1
 			angle+=0.01
-			if btnp(4) or ttl<0 then
-				next_state(start_state)
+
+			if btn(4)!=last_btn then
+				btn_press+=1
+				last_btn=btn(4)
+			end
+
+			if btn_press>1 or ttl<0 then
+				next_state(play_state,track.checkpoints)
 			elseif btnp(5) then
 				-- back to selection title
 				load("title.p8")
@@ -1203,6 +1217,9 @@ function gameover_state(win,total_t)
 end
 
 function _init()
+	cartdata("freds72_vr")
+	menuitem(1, "reset records", function() for i=0,3 do dset(i,0) end end)
+
 	-- integrated fillp/color
 	poke(0x5f34,1)
 
@@ -1230,7 +1247,7 @@ function _init()
 	reload()
 
 	-- init state machine
-	next_state(start_state)
+	next_state(play_state,track.checkpoints)
 end
 
 function _update()
@@ -1249,11 +1266,8 @@ function _update()
 		npc:update()
 	end
 
-	if plyr then
-		-- cam:track(npcs[1]:get_pos())
-		local pos,a=plyr:get_pos()
-		cam:track(pos,a,plyr:get_up())
-	end
+	local pos,a=plyr:get_pos()
+	cam:track(pos,a,plyr:get_up())
 
 	skidmarks:update()
 end
@@ -1454,7 +1468,9 @@ function _draw()
 
 	local y=-32
 
-	print(stat(1).."\n"..update_cpu.."(u)\n"..stat(0).."b\n"..plyr.track:get_u(),-62,y+2,0)
+	if plyr.sr then
+		print(stat(1).."\n"..update_cpu.."(u)\n"..stat(0).."b\nsr:"..plyr.sr,-62,y+2,0)
+	end
 end
 
 -->8
@@ -1593,7 +1609,7 @@ function unpack_models()
 	-- for all models
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
-		scale=1/28
+		scale=1/32
 		unpack_array(function()
 			local d=unpack_double()
 			assert(d<127,"lod distance too large:"..d)
@@ -1778,7 +1794,12 @@ function time_tostr(t)
 	-- frames per sec
 	local s=padding(flr(t/30)%60).."''"..padding(flr(10*t/3)%100)
 	-- more than a minute?
-	if(t>1800) s=padding(flr(t/1800)).."'"..s
+	if t>1800 then
+		s=padding(flr(t/1800)).."'"..s
+	else
+		-- minute placeholder
+		s="0'"..s
+	end
 	return s
 end
 
@@ -1987,3 +2008,5 @@ __sfx__
 000a00002b05033000220002800000000000002200000000000000000000000000000000023000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 000900002d0502d0502d0502d0502d05029400233000f400000000940000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0004000025050300503005025050000002e00031000000003a00030000000002e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000500000d65003630000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00020000121201122012130122301413014240141401624017150182601a1601d170201701b2701817012270101600d2600a15007240071400623005130051300413004120031200312002120021200211002110

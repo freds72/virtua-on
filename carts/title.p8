@@ -565,6 +565,13 @@ function selection_state()
  	local width=54+12
 	local start_race_async
 
+	-- record records (if any)
+	for _,t in pairs(track_spr) do
+		local best_t=dget(t.id)
+		-- empty/no records
+		if(best_t>0) t.best_t=best_t
+	end
+
 	return {
 		-- draw
 		draw=function()
@@ -593,7 +600,10 @@ function selection_state()
 				local s=track_spr[track+1]
 				printb(s.level,nil,74,s.c)
 				-- track records				
-				-- todo
+				if s.best_t then
+					printb("track record",nil,82,7)
+					printb(time_tostr(s.best_t),nil,90,10)
+				end
 			end
 			palt()
 
@@ -645,6 +655,9 @@ function load_state(id)
 end
 
 function _init()
+	cartdata("freds72_vr")
+	menuitem(1, "reset records", function() for i=0,3 do dset(i,0) end end)
+
 	-- integrated fillp/color
 	poke(0x5f34,1)
 
@@ -972,6 +985,19 @@ end
 
 -->8
 -- print helpers
+function padding(n)
+	n=tostr(flr(min(n,99)))
+	return sub("00",1,2-#n)..n
+end
+
+function time_tostr(t)
+	if(t==32000) return "--"
+	-- frames per sec
+	local s=padding(flr(t/30)%60).."''"..padding(flr(10*t/3)%100)
+	-- more than a minute?
+	if(t>1800) s=padding(flr(t/1800)).."'"..s
+	return s
+end
 
 -- bold print
 function printb(s,x,y,c,c2)
