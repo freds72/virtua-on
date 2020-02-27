@@ -442,6 +442,9 @@ def export_track_segments(obcontext):
         for i in range(0,rlen):
             v = right_track[i]
             if chkpt_vg.index in [ vg.group for vg in v.groups ]:
+                # edge case: start of track
+                if i==0:
+                    i=rlen
                 print("found checkpoint segment: {}".format(i))
                 checkpoints.append(i)
                 break

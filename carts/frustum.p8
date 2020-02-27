@@ -50,11 +50,6 @@ function v_normz(v)
 	end
 	return v
 end
-function v_cross(a,b)
-	local ax,ay,az=a[1],a[2],a[3]
-	local bx,by,bz=b[1],b[2],b[3]
-	return {ay*bz-az*by,az*bx-ax*bz,ax*by-ay*bx}
-end
 
 function v_lerp(a,b,t)
 	return {
@@ -935,15 +930,14 @@ function make_npc(p,angle,track)
 end
 
 function is_inside(p,f)
-	local v=track.v
-	local p0=v[f[f.ni]]
+	local p0=f[f.ni]
 	for i=1,f.ni do
-		local p1=v[f[i]]
+		local p1=f[i]
 		if((p0[3]-p1[3])*(p[1]-p0[1])+(p1[1]-p0[1])*(p[3]-p0[3])<0) return
 		p0=p1
 	end
 	-- intersection point
-	local t=-v_dot(make_v(v[f[1]],p),f.n)/f.n[2]
+	local t=-v_dot(make_v(f[1],p),f.n)/f.n[2]
 	p=v_clone(p)
 	p[2]+=t
 	return f,p
@@ -1234,7 +1228,7 @@ function _init()
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=0
+		track_id=1
 	end
 	
 	-- load regular 3d models
@@ -1276,11 +1270,11 @@ end
 -- uses m (matrix) and v (vertices) from self
 -- saves the 'if not ...' in inner loop
 local v_cache_cls={
-	__index=function(t,k)
-		if(not k) return
+	-- v is vertex reference
+	__index=function(t,v)
+		if(not v) return
 		-- inline: local a=m_x_v(t.m,t.v[k]) 
-		local v,m=t.v[k],t.m
-		local x,y,z=v[1],v[2],v[3]
+		local m,x,y,z=t.m,v[1],v[2],v[3]
 		local ax,ay,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]
 	
 		local outcode=k_near
@@ -1290,7 +1284,7 @@ local v_cache_cls={
 		
 		-- assume vertex is visible, compute 2d coords
 		local a={ax,ay,az,outcode=outcode,clipcode=band(outcode,2),x=shl(ax/az,6),y=-shl(ay/az,6)} 
-		t[k]=a
+		t[v]=a
 		return a
 	end
 }
@@ -1353,7 +1347,7 @@ function collect_model_faces(model,m,parts,out)
 	m=m_x_m(cam.m,m)
 
 	-- vertex cache (and model context)
-	local p=setmetatable({m=m,v=model.v},v_cache_cls)
+	local p=setmetatable({m=m},v_cache_cls)
 
 	-- main model
 	collect_faces(model.f,cam_pos,p,out,parts.colors)
@@ -1405,8 +1399,8 @@ function draw_faces(faces,v_cache)
 			if main_face.skidmarks then
 				local m=v_cache.m
 				for _,skids in pairs(main_face.skidmarks) do
-					local s_cache=setmetatable({m=v_cache.m,v=skids},v_cache_cls)
-					draw_face(s_cache[1],s_cache[2],s_cache[4],s_cache[3],0x1150.a5a5)
+					local s_cache=setmetatable({m=v_cache.m,},v_cache_cls)
+					draw_face(s_cache[skids[1]],s_cache[skids[2]],s_cache[skids[4]],s_cache[skids[3]],0x1150.a5a5)
 				end
 			end
 		end
@@ -1428,7 +1422,7 @@ function _draw()
  	end
 
 	-- track
-	local v_cache=setmetatable({m=cam.m,v=track.v},v_cache_cls)
+	local v_cache=setmetatable({m=cam.m},v_cache_cls)
 
 	local out,tiles,cam_pos={},cam:visible_tiles(),cam.pos
 	
@@ -1542,7 +1536,7 @@ function unpack_string()
 	return s
 end
 
-function unpack_face()
+function unpack_face(verts)
 	local f={flags=unpack_int(),c=unpack_int(),session=0xffff}
 	-- shadows
 	if(f.c==0x50) f.c=0x0150
@@ -1551,28 +1545,29 @@ function unpack_face()
 	f.ni=band(f.flags,2)>0 and 4 or 3
 	-- vertex indices
 	-- quad?
+	-- using the face itself saves more than 500KB!
 	for i=1,f.ni do
-		-- using the face itself saves more than 500KB!
-		f[i]=unpack_variant()
+		-- direct reference to vertex
+		f[i]=verts[unpack_variant()]
 	end
 	return f
 end
 
 function unpack_model(model,scale)
 	-- vertices
-	local v=model.v
+	local verts={}
 	unpack_array(function()
-		add(v,unpack_v(scale))
+		add(verts,unpack_v(scale))
 	end)
 
 	-- faces
 	unpack_array(function()
-		local f=unpack_face()
+		local f=unpack_face(verts)
 		-- inner faces?
 		if band(f.flags,8)>0 then
 			f.inner={}
 			unpack_array(function()
-				add(f.inner,unpack_face())
+				add(f.inner,unpack_face(verts))
 			end)
 		end
 		-- collision planes?
@@ -1585,7 +1580,7 @@ function unpack_model(model,scale)
 				local v0=band(shr(bi,i*4),0xf)
 				local v1=(v0+1)%f.ni
 				-- get border vectors
-				v0,v1=model.v[f[v0+1]],model.v[f[v1+1]]
+				v0,v1=f[v0+1],f[v1+1]
 				-- make a 2d plane vector
 				local bn=make_v(v1,v0)
 				bn[2]=0
@@ -1594,13 +1589,13 @@ function unpack_model(model,scale)
 			end
 		end
 		-- normal
-		f.n=v_cross(make_v(v[f[1]],v[f[f.ni]]),make_v(v[f[1]],v[f[2]]))
-		v_normz(f.n)
+		f.n=v_normz(v_cross(make_v(f[1],f[f.ni]),make_v(f[1],f[2])))
 		-- viz check
-		f.cp=v_dot(f.n,model.v[f[1]])
+		f.cp=v_dot(f.n,f[1])
 
 		add(model.f,f)
 	end)
+	return verts
 end
 function unpack_models()
 	-- cars are in first data cart
@@ -1619,19 +1614,19 @@ function unpack_models()
   
 		-- level of details models
 		unpack_array(function()
-			local lod={v={},f={},vgroups={}}
-			unpack_model(lod,scale)
+			local lod={f={},vgroups={}}
+			local verts=unpack_model(lod,scale)
 			-- unpack vertex groups (as sub model)
 			unpack_array(function()				
 				local name=unpack_string()
 				local vgroup={offset=unpack_v(scale),f={}}
 				-- faces
 				unpack_array(function()
-					local f=unpack_face()
+					local f=unpack_face(verts)
 					-- normal
 					f.n=unpack_v()
 					-- viz check
-					f.cp=v_dot(f.n,lod.v[f[1]])
+					f.cp=v_dot(f.n,f[1])
 
 					add(vgroup.f,f)
 				end)				
@@ -1663,7 +1658,6 @@ function unpack_track(id)
 		-- convert to fillp-compatible color
 		ground_color=ground_color+16*ground_color,
 		sky_color=sky_color+16*sky_color,
-		v={},
 		f={},
 		n={},
 		cp={},
@@ -1674,7 +1668,7 @@ function unpack_track(id)
 		segments={}}
 
 	-- vertices + faces + normal data
-	unpack_model(model)
+	local verts=unpack_model(model)
 
 	-- voxels: collision and rendering optimization
 	unpack_array(function()
@@ -1694,7 +1688,7 @@ function unpack_track(id)
 	-- track segments
 	local tmp={}
 	unpack_array(function()
-		local l,r=model.v[unpack_variant()],model.v[unpack_variant()]
+		local l,r=verts[unpack_variant()],verts[unpack_variant()]
 		-- left
 		add(tmp,l)
 		-- right

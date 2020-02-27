@@ -16,7 +16,7 @@ def makeMaterial(name, diffuse, culling):
 models = {
     "big_forest": {
         "offset": 0x00138200,
-        "segments": 127},
+        "segments": 128},
     "ocean": {
         "offset": 0x0014c200,
         "segments": 127
@@ -53,7 +53,7 @@ bpy.context.scene.objects.link(ob)
 bm = bmesh.new()   # create an empty BMesh
 bm.from_mesh(me)   # fill it in from a Mesh
  
-model = models["ocean"]
+model = models["big_forest"]
 with open(os.path.join("C:\\Users\\Frederic\\Source\\Repos\\virtua-on\\models","Virtua Racing (USA).md"), 'rb') as rom_file:
     rom_file.seek(model["offset"])
     for o in range(model["segments"]):
@@ -72,7 +72,7 @@ with open(os.path.join("C:\\Users\\Frederic\\Source\\Repos\\virtua-on\\models","
             # 0x20: dithering
             # 0x10: tri/quad
             # render order: face_flags & 0xf
-            mat_name = "{0:b}".format(face_flags)
+            mat_name = "{:02x}{}".format(face_colors & 0xff,"_dual" if 0x40 & face_flags==0 else "")
             mat_index = -1
             mat = ob.data.materials.get(mat_name)
             if mat!=None:
