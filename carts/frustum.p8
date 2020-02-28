@@ -41,12 +41,11 @@ function v_len(v)
 	return d*(x*x+y*y+z*z)^0.5
 end
 function v_normz(v)
-	local d=v_dot(v,v)
+	local x,y,z=v[1],v[2],v[3]
+	local d=x*x+y*y+z*z
 	if d>0.001 then
 		d=d^.5
-		v[1]/=d
-		v[2]/=d
-		v[3]/=d
+		return {x/d,y/d,z/d}
 	end
 	return v
 end
@@ -140,8 +139,7 @@ function make_m_from_euler(x,y,z)
 end
 function make_m_from_v_angle(up,angle)
 	local fwd={-sin(angle),0,cos(angle)}
-	local right=v_cross(up,fwd)
-	v_normz(right)
+	local right=v_normz(v_cross(up,fwd))
 	fwd=v_cross(right,up)
 	return {
 		right[1],right[2],right[3],0,
@@ -308,22 +306,25 @@ end
 
 -- camera
 function make_cam()
-	-- views
+	-- pov switching future
 	local switching_async
+
 	-- 0: far
 	-- 1: close
 	-- 2: cockpit
-	local view_mode=0
+	local view_mode,is_locked=0
 	-- view offset/angle/lag
 	local view_pov={
 		{z=-1.65,y=1.125,lag=0.2,znear=1,dist=2.1},
 		{z=-0.7,y=0.3,lag=0.1,znear=0.25,dist=1},
-		{z=-0.01,y=0.11,lag=0.6,znear=0.05,dist=2.1}
+		{z=-0.03,y=0.12,lag=0.6,znear=0.05,dist=2.1}
 	}
 
 	local current_pov=view_pov[view_mode+1]
 	local pov_z,pov_y,pov_lag,max_dist=current_pov.z,current_pov.y,current_pov.lag,current_pov.dist
+	-- set current znear
 	z_near=current_pov.znear
+
 	--
 	local up={0,1,0}
 
@@ -340,33 +341,40 @@ function make_cam()
 	return {
 		pos={0,0,0},
 		angle=0,
+		get_pov=function() return view_mode end,
 		shake=function(self,u,v,pow)
 			shkx=min(4,shkx+pow*u)
 			shky=min(4,shky+pow*v)
 		end,
+		lock_pov=function(self,lock) is_locked=lock end,
+		switch_pov=function(self,next_mode)
+			-- nothing to do?
+			if(next_mode==view_mode) return
+			local next_pov=view_pov[next_mode+1]
+			local next_pov_z,next_pov_y,next_pov_lag,next_znear,next_dist=next_pov.z,next_pov.y,next_pov.lag,next_pov.znear,next_pov.dist
+			switching_async=cocreate(function()
+				for i=0,30 do
+					-- todo: token optimize!
+					local t=0.22
+					pov_z=lerp(pov_z,next_pov_z,t)
+					pov_y=lerp(pov_y,next_pov_y,t)
+					pov_lag=lerp(pov_lag,next_pov_lag,t)
+					z_near=lerp(z_near,next_znear,t)
+					max_dist=lerp(max_dist,next_dist,t)
+					yield()
+				end
+				-- commit change
+				view_mode=next_mode
+			end)
+		end,
 		update=function(self)
 			if switching_async then
 				switching_async=corun(switching_async)
-			elseif btn(3) then
-				local next_mode=(view_mode+1)%#view_pov
-				local next_pov=view_pov[next_mode+1]
-				local next_pov_z,next_pov_y,next_pov_lag,next_znear,next_dist=next_pov.z,next_pov.y,next_pov.lag,next_pov.znear,next_pov.dist
-				switching_async=cocreate(function()
-					for i=0,30 do
-						-- todo: token optimize!
-						local t=0.22
-						pov_z=lerp(pov_z,next_pov_z,t)
-						pov_y=lerp(pov_y,next_pov_y,t)
-						pov_lag=lerp(pov_lag,next_pov_lag,t)
-						z_near=lerp(z_near,next_znear,t)
-						max_dist=lerp(max_dist,next_dist,t)
-						yield()
-					end
-					-- commit change
-					view_mode=next_mode
-				end)
+			elseif btn(3) and not is_locked then
+				self:switch_pov((view_mode+1)%#view_pov)
 			end
 
+			-- screen shake
 			shkx*=-0.7-rnd(0.2)
 			shky*=-0.7-rnd(0.2)
 			if abs(shkx)<0.5 and abs(shky)<0.5 then
@@ -375,12 +383,10 @@ function make_cam()
 			camera(shkx-64,shky-64)
 		end,
 		track=function(self,pos,a,u)
-   			pos=v_clone(pos)
    			-- lerp angle
 			self.angle=lerp(self.angle,a,pov_lag)
 			-- lerp orientation
-			up=v_lerp(up,u,pov_lag)
-			v_normz(up)
+			up=v_normz(v_lerp(up,u,pov_lag))
 
 			-- shift cam position			
 			local m=make_m_from_v_angle(up,self.angle)
@@ -443,9 +449,9 @@ function make_cam()
 	}
 end
 
+-- skidmarks factory
 function make_skidmarks()
-	local t,skidmarks=0,{}
-	local width=0.01
+	local t,skidmarks,width=0,{},0.01
 	return {
 		make_emitter=function()
 			local emit_t,start_pos,oldf=0
@@ -462,8 +468,7 @@ function make_skidmarks()
 				emit_t=t+1
 				-- find face
 				if emit_t%10==0 or oldf!=newf then
-					local fwd=make_v(start_pos,pos)
-					v_normz(fwd)
+					local fwd=v_normz(make_v(start_pos,pos))
 					current_right=v_cross(fwd,oldf.n)
 					-- skidmarks corners
 					oldf.skidmarks=oldf.skidmarks or {}
@@ -982,7 +987,7 @@ function next_state(state,...)
 	draw_state,update_state=state(...)
 end
 
-function play_state(checkpoints)
+function play_state(checkpoints,cam_checkpoints)
 
 	--***********
 	-- start over
@@ -1027,6 +1032,7 @@ function play_state(checkpoints)
 		return 44+0.3*(cc*x-ss*y),-0.3*(ss*x+cc*y)
 	end
 	
+	local cam_checkpoint,cam_pov=0
 
 	local prev_rank,ranks=1,{"st","nd","rd"}
 	return
@@ -1121,6 +1127,27 @@ function play_state(checkpoints)
 				return
 			end
 			lap_t+=1
+
+			-- auto_switch pov at some location (only for ocean)
+			if cam_checkpoints then
+				if plyr.track:gt(#laps,cam_checkpoints[cam_checkpoint+1]) then
+					if cam_checkpoint==0 then
+						-- backup current pov
+						cam_pov=cam:get_pov()
+						
+						-- high pov?
+						if(cam_pov==0) cam:switch_pov(1)
+						cam:lock_pov(true)
+					else
+						cam:lock_pov()
+						cam:switch_pov(cam_pov)
+					end
+
+					-- only 2 checkpoints (ever!)
+					cam_checkpoint=(cam_checkpoint+1)%2
+				end
+			end
+
 			if plyr.track:gt(#laps,checkpoints[checkpoint+1]) then
 				checkpoint+=1
 				remaining_t+=30*10
@@ -1202,7 +1229,7 @@ function gameover_state(win,total_t,rank)
 			end
 
 			if btn_press>1 or ttl<0 then
-				next_state(play_state,track.checkpoints)
+				next_state(play_state,track.checkpoints,track.cam_checkpoints)
 			elseif btnp(5) then
 				-- back to selection title
 				load("title.p8")
@@ -1228,7 +1255,7 @@ function _init()
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=1
+		track_id=2
 	end
 	
 	-- load regular 3d models
@@ -1241,7 +1268,7 @@ function _init()
 	reload()
 
 	-- init state machine
-	next_state(play_state,track.checkpoints)
+	next_state(play_state,track.checkpoints,track.cam_checkpoints)
 end
 
 function _update()
@@ -1584,7 +1611,7 @@ function unpack_model(model,scale)
 				-- make a 2d plane vector
 				local bn=make_v(v1,v0)
 				bn[2]=0
-				v_normz(bn)
+				bn=v_normz(bn)
 				add(f.borders,{v=v0,n={bn[3],0,-bn[1]}})
 			end
 		end
@@ -1665,7 +1692,9 @@ function unpack_track(id)
 		ground={},
 		start_pos=unpack_v(),
 		checkpoints={},
-		segments={}}
+		segments={},
+		-- hardcoded cam checkpoints for ocean
+		cam_checkpoints=id==2 and {27,38}}
 
 	-- vertices + faces + normal data
 	local verts=unpack_model(model)

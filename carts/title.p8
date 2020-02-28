@@ -557,16 +557,16 @@ function selection_state()
 	local track=0
  	local track_tgt=0
 	local blink=true
-	local track_spr={
-		{0,0,level="beginner",c=7,id=0},
-		{0,56,level="medium",c=7,id=1},
-		{54,0,level="expert",c=10,id=2}
+	local tracks={
+		{0,0,level="beginner",c=7,id=0,title="big forest"},
+		{54,0,level="medium",c=7,id=2,title="ocean"},
+		{0,56,level="expert",c=10,id=1,title="acropolis"}
 	}
  	local width=54+12
 	local start_race_async
 
 	-- record records (if any)
-	for _,t in pairs(track_spr) do
+	for _,t in pairs(tracks) do
 		local best_t=dget(t.id)
 		-- empty/no records
 		if(best_t>0) t.best_t=best_t
@@ -587,27 +587,27 @@ function selection_state()
 			camera()
 			printb("⬅️ select track ➡️",28,2,7)            
 			if track_tgt==track and blink then
-				rectfill(34,9,93,70,0xaa.0)
+				rectfill(34,19,93,80,0xaa.0)
 			end
+			
 			palt(0,false)
 			local x=-width*track_tgt
-			for i=1,#track_spr do
-				local s=track_spr[i]
-				sspr(s[1],s[2],54,56,flr(64+x-54/2),12,54,56)
+			for i=1,#tracks do
+				local s=tracks[i]
+				sspr(s[1],s[2],54,56,flr(64+x-54/2),22,54,56)
 				x+=width
 			end
 			if track_tgt==track then
-				local s=track_spr[track+1]
-				printb(s.level,nil,74,s.c)
+				local s=tracks[track+1]
+				printb(s.title,nil,12,7,5)
+				printb(s.level,nil,84,s.c)
 				-- track records				
-				if s.best_t then
-					printb("track record",nil,82,7)
-					printb(time_tostr(s.best_t),nil,90,10)
-				end
+				printb("track record",nil,92,7)
+				printb(s.best_t and time_tostr(s.best_t) or "--'--''--",nil,100,10)
 			end
 			palt()
 
-			if(t%32<16) printb("❎🅾️ to race",nil,120,10,4)
+			if(t%32<16) printb("❎/🅾️ to race",nil,120,10,4)
 		end,
 		-- update
 		update=function(self)
@@ -616,7 +616,7 @@ function selection_state()
 			t+=1
 			if(btnp(0)) track-=1
 			if(btnp(1)) track+=1					
-			track=mid(track,0,#track_spr-1)
+			track=mid(track,0,#tracks-1)
 
 			local k=track
   			track_tgt=lerp(track_tgt,k,0.18)
@@ -634,7 +634,7 @@ function selection_state()
 						blink=i%2==0 and true
 						yield()
 					end
-					push_state(slidein_state,load_state,track_spr[track+1].id)
+					push_state(slidein_state,load_state,tracks[track+1].id)
 				end)
 			end
 		end
