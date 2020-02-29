@@ -1262,7 +1262,7 @@ function _init()
 	unpack_models()
 
 	-- track data
-	track=unpack_track(track_id)
+	track=unpack_track(tonum(track_id))
 
 	-- restore
 	reload()
@@ -1669,12 +1669,13 @@ function unpack_models()
 end
 
 -- unpack multi-cart track
-function unpack_track(id)
-	-- assume we are not at cart boundary!!
-	mem+=id*3
-	-- read track offsets
+function unpack_track(track_id)
+	-- assumes we are not at cart boundary!!
+	mem+=track_id*3
+	-- read start cart id + in-cart memory offset
 	cart_id,mem=unpack_int(),unpack_int(2)
 
+	-- jump to cart
 	reload(0,0,0x4300,"tracks_"..cart_id..".p8")
 
 	local id,colors=unpack_int(),unpack_int()
@@ -1683,8 +1684,8 @@ function unpack_track(id)
 		id=id,
 		map=16*id,
 		-- convert to fillp-compatible color
-		ground_color=ground_color+16*ground_color,
-		sky_color=sky_color+16*sky_color,
+		ground_color=bor(ground_color,16*ground_color),
+		sky_color=bor(sky_color,16*sky_color),
 		f={},
 		n={},
 		cp={},
@@ -1694,7 +1695,7 @@ function unpack_track(id)
 		checkpoints={},
 		segments={},
 		-- hardcoded cam checkpoints for ocean
-		cam_checkpoints=id==2 and {27,38}}
+		cam_checkpoints=track_id==2 and {27,38}}
 
 	-- vertices + faces + normal data
 	local verts=unpack_model(model)

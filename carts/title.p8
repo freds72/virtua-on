@@ -149,15 +149,7 @@ function m_clone(m)
 	end
 	return c
 end
-function print_m(m)
-	for i=0,3 do
-		local s=""
-		for j=0,3 do
-			s=s..m[i*4+j+1].."\t"
-		end
-		printh(s)
-	end
-end
+
 function make_m_from_euler(x,y,z)
 		local a,b = cos(x),-sin(x)
 		local c,d = cos(y),-sin(y)
@@ -789,7 +781,6 @@ function unpack_model(model,scale)
 		local f=unpack_face()
 		-- inner faces?
 		if band(f.flags,8)>0 then
-			printh("inner faces...")
 			f.inner={}
 			unpack_array(function()
 				add(f.inner,unpack_face())
@@ -808,7 +799,6 @@ function unpack_models()
 	-- for all models
 	unpack_array(function()
 		local model,name,scale={lods={},lod_dist={}},unpack_string(),1/unpack_int()
-		printh(name..":"..scale)
 
 		unpack_array(function()
 			local d=unpack_double()
@@ -824,7 +814,6 @@ function unpack_models()
 			-- unpack vertex groups (as sub model)
 			unpack_array(function()				
 				local name=unpack_string()
-				printh("vgroup:"..name)
 				local vgroup={offset=unpack_v(scale),f={}}
 				-- faces
 				unpack_array(function()
