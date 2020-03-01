@@ -705,7 +705,7 @@ function make_plyr(p,angle,track)
 		-- adjust pitch
 		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
 		-- base engine
-		rpmvol=max(8,rpmvol-8)
+		rpmvol=max(8,rpmvol-2)
 		addr+=2
 		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
 		-- ensure engine sound is playing
@@ -867,10 +867,9 @@ function make_npc(p,angle,track)
 			-- find track target point based on curvature		
 			tgt=v_lerp(l2,r2,mid(0.5*len1/len2,0.2,0.8))
 			
-			-- intersect?
-			n1=make_v(r1,l1)
+			-- line of sight intersects track?
 			local v=v_normz(make_v(self.pos,tgt))
-			local t=v2_cross(make_v(self.pos,l1),v)/v2_cross(n1,v)
+			local t=v2_cross(make_v(self.pos,l1),v)/v2_cross(make_v(r1,l1),v)
 			if t>0.8 or t<0.2 then
 				break
 			end
@@ -882,10 +881,7 @@ function make_npc(p,angle,track)
 		-- ortho angle + pid
 		target_angle=pid(0,0.75-target_angle,1/30)
 
-		local brake=abs(target_angle)>0.12
-		rpm=0.6*lerp(0.8,1,1-curve/1.4)
-
-		rpm=self:steer(target_angle,rpm,brake)
+		rpm=self:steer(target_angle,0.6*lerp(0.8,1,1-curve/1.5),abs(target_angle)>0.12)
 	end
 	body.update_parts=function(self,total_r,steering_angle)
 		local wheel_m=make_m_from_euler(total_r,0,0)
@@ -895,7 +891,7 @@ function make_npc(p,angle,track)
 	local body_update=body.update
 	body.update=function(self)
 		body_update(self)
-		rpm*=0.93
+		rpm*=0.97
 	end
 
 	-- wrapper
