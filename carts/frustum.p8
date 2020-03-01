@@ -181,40 +181,6 @@ function corun(f)
 	return nil
 end
 
--- radix sort
--- base code: https://twitter.com/jamesedge
-function sort(_data)  
-	local _len,buffer1,buffer2,idx=#_data,_data,{},{}
-
-	-- radix shift
-	for shift=0,8,8 do
-		-- faster than for each/zeroing count array
-		memset(0x4300,0,256)
-
-		for i,b in pairs(buffer1) do
-			local c=bor(0x4300,band(shr(b.key,shift),255))
-			poke(c,peek(c)+1)
-			idx[i]=c
-		end
-				
-		-- shifting array
-		local c0=peek(0x4300)
-		for mem=0x4301,0x43ff do
-			local c1=peek(mem)+c0
-			poke(mem,c1)
-			c0=c1
-		end
-
-		for i=_len,1,-1 do
-			local c=peek(idx[i])
-			buffer2[c]=buffer1[i]
-			poke(idx[i],c-1)
-		end
-
-		buffer1,buffer2=buffer2,buffer1
-	end
-end
-
 -- sort
 -- https://github.com/morgan3d/misc/tree/master/p8sort
 -- 
@@ -515,18 +481,13 @@ function make_car(model_name,lod_id,p,angle,track)
 	-- model for skidmarks (if any)
 	local model=lod_id and all_models[model_name].lods[lod_id]
 
-	-- front wheels
-	local front_emitters={
+	-- front + rear wheels + slide flags
+	local front_emitters,rear_emitters,front_slide,rear_slide={
 		lfw=skidmarks:make_emitter(),
-		rfw=skidmarks:make_emitter()
-	}
-	-- rear wheels
-	local rear_emitters={
+		rfw=skidmarks:make_emitter()},{
 		rrw=skidmarks:make_emitter(),
-		lrw=skidmarks:make_emitter()
-	}
+		lrw=skidmarks:make_emitter()}
 
-	local full_slide,rear_slide
 	local do_skidmarks=function(self,emitters)
 		-- no 3d model?
 		if(not model) return
@@ -573,7 +534,7 @@ function make_car(model_name,lod_id,p,angle,track)
 			angularv+=torque*0.5/30
 
 			-- apply some damping
-			angularv*=0.86
+			angularv*=0.8
 			v_scale(velocity,0.97)
 			-- some friction
 			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
@@ -590,42 +551,38 @@ function make_car(model_name,lod_id,p,angle,track)
 			forces,torque={0,0,0},0
 
 			-- skidmarks
-			if full_slide==true then
-				do_skidmarks(self,front_emitters)
-				do_skidmarks(self,rear_emitters)
-			elseif rear_slide==true then
-				do_skidmarks(self,rear_emitters)
-			end
+			if(front_slide==true) do_skidmarks(self,front_emitters)
+			if(rear_slide==true) do_skidmarks(self,rear_emitters)
 		end,
 		get_speed=function(self)
 			return 250*3.6*(v_dot(velocity,velocity)^0.5)
 		end,
 		steer=function(self,steering_dt,rpm,braking)
-			steering_angle+=mid(steering_dt,-0.2,0.2)
+			steering_angle+=steering_dt
+			steering_angle=mid(steering_angle,-0.2,0.2)
 
 			-- longitudinal slip ratio
 			local sr=v_dot(m_right(self.m),velocity)
 			-- slipping?
-			full_slide=abs(sr)>0.12 
+			front_slide=abs(sr)>0.12 
 
 			-- max "grip"
-			sr=mid(sr,-0.10,0.10)
-			sr=1-abs(sr)/0.40
-			steering_angle*=sr
+			sr=1-abs(mid(sr,-0.10,0.10))/0.40
 			
 			local fwd=m_fwd(self.m)
 			local effective_rps=30*v_dot(fwd,velocity)/0.2638
 			local rps=30*rpm*2
 			if rps>10 then
-				rpm*=lerp(0.9,1,effective_rps/rps)
+				-- scale forward force according to grip ratio
+				rpm*=lerp(0.63,1,effective_rps/rps)
 			end
 
 			if braking then
 				-- todo: take into account sr
 				v_scale(velocity,0.9)
 			end
-			v_scale(fwd,rpm*sr)			
-			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,0.22,rpm/max_rpm))
+			v_scale(fwd,rpm)			
+			self:apply_force_and_torque(fwd,-0.72*sr*steering_angle*min(1,rpm/max_rpm))
 
 			-- rear wheels sliding?
 			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6		
@@ -701,7 +658,7 @@ function make_car(model_name,lod_id,p,angle,track)
 			-- update car parts (orientations)
 			local fwd=m_fwd(self.m)
 			total_r+=v_dot(fwd,velocity)/0.2638
-			self:update_parts(total_r,steering_angle)
+			self:update_parts(total_r,steering_angle,front_slide or rear_slide)
 		end,
 		angle_to=function(self,tgt)
 			local a=(atan2(tgt[1]-self.pos[1],tgt[3]-self.pos[3])-angle)%1
@@ -717,6 +674,7 @@ function make_plyr(p,angle,track)
 	-- backup parent methods
 	local body_update=body.update
 
+	-- start engine sfx
 	sfx(0)
 	
 	body.control=function(self)	
@@ -750,15 +708,23 @@ function make_plyr(p,angle,track)
 		rpmvol=max(8,rpmvol-8)
 		addr+=2
 		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+		-- ensure engine sound is playing
+		local fix_engine=true
+		for i=16,19 do
+			if(stat(i)==0) fix_engine=nil break
+		end
+		if(fix_engine) sfx(0)
 
 		-- rough terrain?
 		local ground=self:get_ground()		
 		if ground and band(ground.flags,0x4)==0 then
 			local shake_force=self:get_speed()/200
 			cam:shake(rnd(shake_force),rnd(shake_force),1)
+			-- random noise (avoid noise if not rolling)
+			if(shake_force>0.2) sfx(7+flr(rnd(2)))
 		end
 	end
-	body.update_parts=function(self,total_r,steering_angle)
+	body.update_parts=function(self,total_r,steering_angle,sliding)
 		local wheel_m=make_m_from_euler(total_r,0,0)
 		self.rrw=wheel_m
 		self.lrw=wheel_m
@@ -766,6 +732,8 @@ function make_plyr(p,angle,track)
 		self.lfw=wheel_m
 		self.rfw=wheel_m
 		self.sw=m_from_q(make_q({0,0.2144,-0.9767},-steering_angle/2))
+		-- tire screetch!
+		if(sliding) sfx(1)
 	end
 	-- wrapper
 	return body
@@ -917,7 +885,7 @@ function make_npc(p,angle,track)
 		local brake=abs(target_angle)>0.12
 		rpm=0.6*lerp(0.8,1,1-curve/1.4)
 
-		rpm=self:steer(4*target_angle,rpm,brake)
+		rpm=self:steer(target_angle,rpm,brake)
 	end
 	body.update_parts=function(self,total_r,steering_angle)
 		local wheel_m=make_m_from_euler(total_r,0,0)
@@ -998,7 +966,7 @@ function play_state(checkpoints,cam_checkpoints)
 
 	-- init npc's
 	for i=0,6 do
-		local npc_track=make_track(track.segments,5*i)
+		local npc_track=make_track(track.segments,8*i)
 		local _,l,r=npc_track:get_next()
 		l=v_add(l,r)
 		v_scale(l,0.5)
@@ -1142,9 +1110,7 @@ function play_state(checkpoints,cam_checkpoints)
 						cam:lock_pov()
 						cam:switch_pov(cam_pov)
 					end
-
-					-- only 2 checkpoints (ever!)
-					cam_checkpoint=(cam_checkpoint+1)%2
+					cam_checkpoint+=1
 				end
 			end
 
@@ -1160,7 +1126,7 @@ function play_state(checkpoints,cam_checkpoints)
 				
 				-- closed lap?
 				if checkpoint==n then
-					checkpoint=0
+					checkpoint,cam_checkpoint=0,0
 					-- record time
 					add(laps,time_tostr(lap_t))
 					if lap_t<best_t then
@@ -1255,7 +1221,7 @@ function _init()
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=2
+		track_id=0
 	end
 	
 	-- load regular 3d models
@@ -1695,7 +1661,7 @@ function unpack_track(track_id)
 		checkpoints={},
 		segments={},
 		-- hardcoded cam checkpoints for ocean
-		cam_checkpoints=track_id==2 and {27,38}}
+		cam_checkpoints=track_id==2 and {27,41,512}}
 
 	-- vertices + faces + normal data
 	local verts=unpack_model(model)
@@ -1813,18 +1779,10 @@ function padding(n)
 	return sub("00",1,2-#n)..n
 end
 
+-- frames per sec to human time
 function time_tostr(t)
-	if(t==32000) return "--"
-	-- frames per sec
-	local s=padding(flr(t/30)%60).."''"..padding(flr(10*t/3)%100)
-	-- more than a minute?
-	if t>1800 then
-		s=padding(flr(t/1800)).."'"..s
-	else
-		-- minute placeholder
-		s="0'"..s
-	end
-	return s
+	-- note: assume minutes doesn't go > 9
+	return flr(t/1800).."'"..padding(flr(t/30)%60).."''"..padding(flr(10*t/3)%100)
 end
 
 function printb(s,x,y,c1,c2)
@@ -2027,10 +1985,12 @@ __map__
 21212121212121212121212121212121323232323232323232323232323232323f2d2d2d2d3f3f2d2d3f3f2d2d2d2d2d0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0000000000000000000000000000000020202020202020202020202020202020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
-00010002201501b750131500415004150000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00010002281301d720211301c250231501c2501b2500d1501f2500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000100020a15008550131500415004150000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000100002b740041402a740041402a740051402a740041402a7400315000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 000a00002b05033000220002800000000000002200000000000000000000000000000000023000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 000900002d0502d0502d0502d0502d05029400233000f400000000940000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0004000025050300503005025050000002e00031000000003a00030000000002e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 000500000d65003630000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00020000121201122012130122301413014240141401624017150182601a1601d170201701b2701817012270101600d2600a15007240071400623005130051300413004120031200312002120021200211002110
+00020000181401915019150191601b1601b16018160151601316011150101500e1400d1300c1300c1300b1200b1200a1200a1200a1200a1200a12009120091200912009120091200912009110091100911009110
+000200000c120086300b1300962000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000200000712003020081300602027000287002870028700287001a7002870028700297002970016700297002970029700157002a700000002a700000002a7002a7002a7002a7002a70014700147000000000000
