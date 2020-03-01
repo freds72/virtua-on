@@ -1,6 +1,9 @@
 pico-8 cartridge // http://www.pico-8.com
 version 18
 __lua__
+-- virtua racing
+-- @freds72
+
 -- vector & tools
 function lerp(a,b,t)
 	return a*(1-t)+b*t
@@ -1082,13 +1085,13 @@ function play_state(checkpoints,cam_checkpoints)
 			else
 				total_t+=1
 				remaining_t-=1
+				lap_t+=1
 			end
 
 			if remaining_t==0 then
 				next_state(gameover_state,false,total_t,prev_rank)
 				return
 			end
-			lap_t+=1
 
 			-- auto_switch pov at some location (only for ocean)
 			if cam_checkpoints then
@@ -1192,7 +1195,7 @@ function gameover_state(win,total_t,rank)
 				next_state(play_state,track.checkpoints,track.cam_checkpoints)
 			elseif btnp(5) then
 				-- back to selection title
-				load("vracing_title")
+				load("vracing_title.p8")
 			end
 		end
 end
@@ -1636,7 +1639,7 @@ function unpack_track(track_id)
 	cart_id,mem=unpack_int(),unpack_int(2)
 
 	-- jump to cart
-	reload(0,0,0x4300,"vracing_"..cart_id)
+	reload(0,0,0x4300,"vracing_"..cart_id..".p8")
 
 	local id,colors=unpack_int(),unpack_int()
 	local ground_color,sky_color=band(0xf,colors),shr(band(0xf0,colors),4)

@@ -191,9 +191,16 @@ for b in it:
     s += b
     # full cart?
     if len(s)==2*0x4300:
-        to_cart(s,"tracks",cart_id)
+        to_cart(s,"vracing",cart_id)
         cart_id += 1
         s = ""
 # remaining data?
 if len(s)!=0:
-    to_cart(s,"tracks",cart_id)
+    to_cart(s,"vracing",cart_id)
+
+export_cmd=""
+for i in range(0,cart_id+1):
+    export_cmd += "vracing_{}.p8 ".format(i)
+version="v02"
+print("export index.html {} vracing_main_{}.p8 vracing_title.p8".format(export_cmd,version))
+print("export vracing_v02.bin {} vracing_main_{}.p8 vracing_title.p8".format(export_cmd,version))
