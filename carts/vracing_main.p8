@@ -877,9 +877,7 @@ function make_npc(p,angle,track)
 		end
 		
 		-- default: steer to track
-		local target_angle=self:angle_to(tgt)
-		-- ortho angle + pid
-		target_angle=pid(0,0.75-target_angle,1/30)
+		local target_angle=pid(0,0.75-self:angle_to(tgt),1/30)
 
 		rpm=self:steer(target_angle,0.6*lerp(0.8,1,1-curve/1.5),abs(target_angle)>0.12)
 	end
@@ -1194,13 +1192,13 @@ function gameover_state(win,total_t,rank)
 				next_state(play_state,track.checkpoints,track.cam_checkpoints)
 			elseif btnp(5) then
 				-- back to selection title
-				load("title.p8")
+				load("vracing_title")
 			end
 		end
 end
 
 function _init()
-	cartdata("freds72_vr")
+	cartdata("freds72_vracing")
 	menuitem(1, "reset records", function() for i=0,3 do dset(i,0) end end)
 
 	-- integrated fillp/color
@@ -1464,7 +1462,7 @@ function mpeek()
 	if mem==0x4300 then
 		cart_progress=0
 		cart_id+=1
-		reload(0,0,0x4300,"tracks_"..cart_id..".p8")
+		reload(0,0,0x4300,"vracing_"..cart_id..".p8")
 		mem=0
 	end
 	local v=peek(mem)
@@ -1588,7 +1586,7 @@ function unpack_model(model,scale)
 end
 function unpack_models()
 	-- cars are in first data cart
-	reload(0,0,0x4300,"tracks_0.p8")
+	reload(0,0,0x4300,"vracing_0.p8")
 	cart_id,mem=0,0
 	-- for all models
 	unpack_array(function()
@@ -1638,7 +1636,7 @@ function unpack_track(track_id)
 	cart_id,mem=unpack_int(),unpack_int(2)
 
 	-- jump to cart
-	reload(0,0,0x4300,"tracks_"..cart_id..".p8")
+	reload(0,0,0x4300,"vracing_"..cart_id)
 
 	local id,colors=unpack_int(),unpack_int()
 	local ground_color,sky_color=band(0xf,colors),shr(band(0xf0,colors),4)
