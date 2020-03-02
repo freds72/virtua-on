@@ -558,20 +558,24 @@ function make_car(model_name,lod_id,p,angle,track)
 			if(rear_slide==true) do_skidmarks(self,rear_emitters)
 		end,
 		get_speed=function(self)
-			return 250*3.6*(v_dot(velocity,velocity)^0.5)
+			return 250*3.6*v_len(velocity)
 		end,
 		steer=function(self,steering_dt,rpm,braking)
 			steering_angle+=steering_dt
 			steering_angle=mid(steering_angle,-0.2,0.2)
 
 			-- longitudinal slip ratio
-			local sr=v_dot(m_right(self.m),velocity)
+			local right=m_right(self.m)
+			local sr=v_dot(right,velocity)
 			-- slipping?
-			front_slide=abs(sr)>0.12 
+			front_slide=abs(sr)>0.10 
 
 			-- max "grip"
-			sr=1-abs(mid(sr,-0.10,0.10))/0.40
-			
+			local sa=1-abs(mid(sr,-0.10,0.10))/0.30
+			sr=mid(sr,-0.003,0.003)
+			-- kill lateral velocity (less rally)
+			velocity=v_add(velocity,right,-sr)
+
 			local fwd=m_fwd(self.m)
 			local effective_rps=30*v_dot(fwd,velocity)/0.2638
 			local rps=30*rpm*2
@@ -584,8 +588,8 @@ function make_car(model_name,lod_id,p,angle,track)
 				-- todo: take into account sr
 				v_scale(velocity,0.9)
 			end
-			v_scale(fwd,rpm)			
-			self:apply_force_and_torque(fwd,-0.72*sr*steering_angle*min(1,rpm/max_rpm))
+			v_scale(fwd,rpm*(1-abs(sr)/0.05))			
+			self:apply_force_and_torque(fwd,-0.5*sa*steering_angle*min(1,rpm/max_rpm))
 
 			-- rear wheels sliding?
 			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6		
