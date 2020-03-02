@@ -657,7 +657,7 @@ function load_state(id)
 		end,
 		update=function()
 			-- load track
-			load("vracing_main.p8",nil,id)
+			load("#vracing_main",nil,id)
 		end
 	}
 end
