@@ -268,9 +268,9 @@ local goal_music=3
 
 -- voxel helpers
 function to_tile_coords(v)
-	local x,y=shr(v[1],3)+16,shr(v[3],3)+16
+	local x,y=(v[1]>>3)+16,(v[3]>>3)+16
 	-- slightly faster than flr
-	return band(0xffff,x),band(0xffff,y),x,y
+	return x&0xffff,y&0xffff,x,y
 end
 
 -- camera
@@ -378,7 +378,7 @@ function make_cam()
 		end,
 		visible_tiles=function(self)
 			local x0,y0,x,y=to_tile_coords(self.pos)
-			local tiles,angle,max_dist={[x0+shl(y0,5)]=0},self.angle,flr(max_dist)
+			local tiles,angle,max_dist={[x0|y0<<5]=0},self.angle,flr(max_dist)
    
    			for i,a in pairs(angles) do
 				local v,u=cos(a+angle),-sin(a+angle)
@@ -408,8 +408,8 @@ function make_cam()
 						mapy+=mapdy
 					end
 					-- non solid visible tiles
-					if band(bor(mapx,mapy),0xffe0)==0 then
-						tiles[mapx+shl(mapy,5)]=dist
+					if (mapx|mapy)&0xffe0==0 then
+						tiles[mapx|mapy<<5]=dist
 					end
 				end				
 			end	
@@ -636,7 +636,7 @@ function make_car(model_name,lod_id,p,angle,track)
 			end
 			-- on ground: limit max speed
 			max_rpm=0.6		
-			if oldf and band(oldf.flags,0x4)==0 then
+			if oldf and oldf.flags&0x4==0 then
 				max_rpm=0.4
 			end
 			-- above 0
@@ -702,15 +702,15 @@ function make_plyr(p,angle,track)
 		rpm*=0.97
 
 		local vol=self:get_speed()/400
-		local rpmvol=band(0x3f,flr(32*vol))
+		local rpmvol=flr(32*vol)&0x3f
 		-- sfx 0
 		local addr=0x3200+68*0
 		-- adjust pitch
-		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+		poke(addr,bor(peek(addr)&0xc0,rpmvol))
 		-- base engine
 		rpmvol=max(8,rpmvol-2)
 		addr+=2
-		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+		poke(addr,bor(peek(addr)&0xc0,rpmvol))
 		-- ensure engine sound is playing
 		local fix_engine=true
 		for i=16,19 do
@@ -720,7 +720,7 @@ function make_plyr(p,angle,track)
 
 		-- rough terrain?
 		local ground=self:get_ground()		
-		if ground and band(ground.flags,0x4)==0 then
+		if ground and ground.flags&0x4==0 then
 			local shake_force=self:get_speed()/200
 			cam:shake(rnd(shake_force),rnd(shake_force),1)
 			-- random noise (avoid noise if not rolling)
@@ -962,6 +962,7 @@ function play_state(checkpoints,cam_checkpoints)
 	plyr=add(actors,make_plyr(track.start_pos,0,make_track(track.segments)))
 
 	-- init npc's
+	--[[
 	for i=0,6 do
 		local npc_track=make_track(track.segments,8*i)
 		local _,l,r=npc_track:get_next()
@@ -975,6 +976,7 @@ function play_state(checkpoints,cam_checkpoints)
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 		npc.spr=37+(i%4)
 	end
+	]]
 
 	-- reset cam	
 	cam=make_cam()
@@ -1271,9 +1273,13 @@ local v_cache_cls={
 		if(az>z_near) outcode=k_far
 		if(ax>az) outcode+=k_right
 		if(-ax>az) outcode+=k_left
-		
+
+		-- not faster :/
+		-- local bo=-(((az-z_near)>>31)<<17)-(((az-ax)>>31)<<18)-(((az+ax)>>31)<<19)
+		-- assert(bo==outcode,"outcode:"..outcode.." bits:"..bo)
+
 		-- assume vertex is visible, compute 2d coords
-		local a={ax,ay,az,outcode=outcode,clipcode=band(outcode,2),x=shl(ax/az,6),y=-shl(ay/az,6)} 
+		local a={ax,ay,az,outcode=outcode,clipcode=outcode&2,x=(ax/az)<<6,y=-(ay/az)<<6} 
 		t[v]=a
 		return a
 	end
@@ -1283,11 +1289,11 @@ function collect_faces(faces,cam_pos,v_cache,out,colors)
 	local sessionid=sessionid
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
-		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
+		if face.session!=sessionid and (face.flags&0x1==0x1 or v_dot(face.n,cam_pos)>face.cp) then
 			-- project vertices
 			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]			
 			-- mix of near/far verts?
-			if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
+			if v0.outcode&v1.outcode&v2.outcode&(v3 and v3.outcode or 0xffff)==0 then
 				local verts={v0,v1,v2,v3}
 
 				local ni,is_clipped,y,z=9,v0.clipcode+v1.clipcode+v2.clipcode,v0[2]+v1[2]+v2[2],v0[3]+v1[3]+v2[3]
@@ -1364,7 +1370,7 @@ end
 -- draw face
 -- handles clipping as needed
 function draw_face(v0,v1,v2,v3,col)
-	if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
+	if v0.outcode&v1.outcode&v2.outcode&(v3 and v3.outcode or 0xffff)==0 then
 		local verts={v0,v1,v2,v3}
 		if(v0.clipcode+v1.clipcode+v2.clipcode+(v3 and v3.clipcode or 0)>0) verts=z_poly_clip(z_near,verts)
 		if(#verts>2) polyfill(verts,col)
@@ -1435,7 +1441,7 @@ function _draw()
 		-- is model visible?
 		-- (e.g. voxel tile is visible)
 		local x0,y0=to_tile_coords(pos)
-		if tiles[x0+shl(y0,5)] then
+		if tiles[x0|y0<<5] then
 			local m=actor:get_orient()
 			m_set_pos(m,pos)
 			-- car
@@ -1452,9 +1458,7 @@ function _draw()
 
 	local y=-32
 
-	if plyr.sr then
-		print(stat(1).."\n"..update_cpu.."(u)\n"..stat(0).."b\nsr:"..plyr.sr,-62,y+2,0)
-	end
+	print(stat(1).."\n"..update_cpu.."(u)\n"..stat(0),-62,y+2,0)
 end
 
 -->8
@@ -1713,7 +1717,6 @@ end
 function polyfill(p,col)
 	color(col)
 	local p0,nodes=p[#p],{}
-	-- band vs. flr: -0.20%
 	local x0,y0=p0.x,p0.y
 
 	for i=1,#p do
@@ -1753,15 +1756,15 @@ function z_poly_clip(znear,v)
 		if d1>0 then
 			if d0<=0 then
 				local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-				nv.x=shl(nv[1]/nv[3],6)
-				nv.y=-shl(nv[2]/nv[3],6) 
+				nv.x=(nv[1]/nv[3])<<6
+				nv.y=-(nv[2]/nv[3])<<6 
 				res[#res+1]=nv
 			end
 			res[#res+1]=v1
 		elseif d0>0 then
 			local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-			nv.x=shl(nv[1]/nv[3],6)
-			nv.y=-shl(nv[2]/nv[3],6) 
+			nv.x=(nv[1]/nv[3])<<6
+			nv.y=-(nv[2]/nv[3])<<6 
 			res[#res+1]=nv
 		end
 		v0,d0=v1,d1
