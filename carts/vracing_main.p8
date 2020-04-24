@@ -192,7 +192,7 @@ function sort(data)
 	if(n<2) return
 	
 	-- form a max heap
-	for i = flr(n / 2) + 1, 1, -1 do
+	for i = n\2+1, 1, -1 do
 	 -- m is the index of the max child
 	 local parent, value, m = i, data[i], i + i
 	 local key = value.key 
@@ -249,7 +249,7 @@ local actors={}
 local sessionid=0
 local k_far,k_near=0,2
 local k_right,k_left=4,8
-local z_near=1
+local z_near,dfar=1,1
 
 -- fonts
 local xlfont={
@@ -378,9 +378,9 @@ function make_cam()
 		end,
 		visible_tiles=function(self)
 			local x0,y0,x,y=to_tile_coords(self.pos)
-			local tiles,angle,max_dist={[x0|y0<<5]=0},self.angle,flr(max_dist)
+			local tiles,angle,max_dist,dfar={[x0|y0<<5]=0},self.angle,flr(max_dist),dfar
    
-   			for i,a in pairs(angles) do
+   		for i,a in pairs(angles) do
 				local v,u=cos(a+angle),-sin(a+angle)
 				
 				local mapx,mapy,ddx,ddy,mapdx,mapdy,distx,disty=x0,y0,1/u,1/v,1,1
@@ -399,7 +399,7 @@ function make_cam()
 					disty=(mapy+1-y)*ddy
 				end
 
-				for dist=0,1 do
+				for dist=0,dfar do
 					if distx<disty then
 						distx+=ddx
 						mapx+=mapdx
@@ -920,7 +920,7 @@ function find_face(p,oldf)
 		if(newf) return newf,newp
 	end
 	-- voxel?
-	local x,z=flr(shr(p[1],3)+16),flr(shr(p[3],3)+16)
+	local x,z=((p[1]>>3)+16)\1,((p[3]>>3)+16)\1
 	local faces=track.ground[x+shl(z,5)]
 	if faces then
 		for _,f in pairs(faces) do
@@ -962,7 +962,6 @@ function play_state(checkpoints,cam_checkpoints)
 	plyr=add(actors,make_plyr(track.start_pos,0,make_track(track.segments)))
 
 	-- init npc's
-	--[[
 	for i=0,6 do
 		local npc_track=make_track(track.segments,8*i)
 		local _,l,r=npc_track:get_next()
@@ -976,7 +975,7 @@ function play_state(checkpoints,cam_checkpoints)
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 		npc.spr=37+(i%4)
 	end
-	]]
+
 
 	-- reset cam	
 	cam=make_cam()
@@ -1202,9 +1201,20 @@ function gameover_state(win,total_t,rank)
 		end
 end
 
+function high_draw_dist()
+	dfar=2	
+	menuitem(2, "draw dist: high",low_draw_dist)
+end
+function low_draw_dist()
+	dfar=1	
+	menuitem(2, "draw dist: low",high_draw_dist)
+end
+
 function _init()
 	cartdata("freds72_vracing")
 	menuitem(1, "reset records", function() for i=0,3 do dset(i,0) end end)
+	-- set draw distance menu
+	low_draw_dist()
 
 	-- integrated fillp/color
 	poke(0x5f34,1)
@@ -1378,8 +1388,7 @@ function draw_face(v0,v1,v2,v3,col)
 end
 
 function draw_faces(faces,v_cache)
-	for i=1,#faces do
-		local d=faces[i]
+	for i,d in ipairs(faces) do
 		local main_face=d.f
 		polyfill(d,d.c)
 		-- details?
@@ -1404,8 +1413,6 @@ function draw_faces(faces,v_cache)
 end
 
 function _draw()
-	local update_cpu=stat(1)
-
 	sessionid+=1
 
 	-- background
@@ -1456,9 +1463,10 @@ function _draw()
 	-- hud and game state display
 	draw_state()
 
+	--[[
 	local y=-32
-
 	print(stat(1).."\n"..update_cpu.."(u)\n"..stat(0),-62,y+2,0)
+	]]
 end
 
 -->8
@@ -1782,18 +1790,18 @@ end
 -- frames per sec to human time
 function time_tostr(t)
 	-- note: assume minutes doesn't go > 9
-	return flr(t/1800).."'"..padding(flr(t/30)%60).."''"..padding(flr(10*t/3)%100)
+	return (t\1800).."'"..padding((t\30)%60).."''"..padding(flr(10*t/3)%100)
 end
 
 function printb(s,x,y,c1,c2)
-	x=x or -shl(#s,1)
+	x=x or -(#s<<1)
 	?s,x,y+1,c2 or 1
 	?s,x,y,c1
 end
 
 -- raised print
 function printr(s,x,y,c,c2)
-	x=x or -shl(#s,1)
+	x=x or -(#s<<1)
 	local sy=c2 and -2 or -1
 	for i=-1,1 do
         for j=sy,1 do
