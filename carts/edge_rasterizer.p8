@@ -548,10 +548,9 @@ function convex_zbuf_rasterizer()
 	local screen_cls={
 		__index=function(t,k)
 			-- head of stack
-			-- todo: try with a stack
-			local spans={}
-			t[k]=spans
-			return spans
+			local head={x=-32000}
+			t[k]=head
+			return head
 		end
 	}
 	-- all spans
@@ -586,7 +585,15 @@ function convex_zbuf_rasterizer()
 			if(y0<0) x0-=y0*dx y0=0
    		x0+=(cy0-y0)*dx
 			for y=cy0,min(ceil(y1)-1,127) do
-				add(screen[y],{x=ceil(x0),c=c,z=z})
+				-- get start of linked list
+				local head=screen[y]
+				local prev=head
+				while head.x>x0 do
+					prev,head=head,head.next
+				end
+				-- insert start/end of span
+				prev.next={x=x0,c=c,z=z,next=prev.next}
+
 				--[[
 				local spans=screen[y]
 				local mini=1
@@ -612,39 +619,20 @@ function convex_zbuf_rasterizer()
 			-- sort spans
 			-- sort(spans)
 
-			local _len,buffer1,buffer2,idx=#spans,spans,{},{}
-			-- radix shift
-			for shift=0,4,4 do
-				-- faster than for each/zeroing count array
-				memset(0x4300,0,16)
-
-				for i,b in pairs(buffer1) do
-					local c=0x4300+((b.x>>shift)&0xf)
-					poke(c,@c+1)
-					idx[i]=c
-				end
-						
-				-- shifting array
-				local c0=peek(0x4300)
-				for mem=0x4301,0x430f do
-					local c1=@mem+c0
-					poke(mem,c1)
-					c0=c1
-				end
-
-				for i=_len,1,-1 do
-					local c=@idx[i]
-					buffer2[c] = buffer1[i]
-					poke(idx[i],c-1)
-				end
-
-				buffer1, buffer2 = buffer2, buffer1
-			end
-			
 			-- assert(#spans<33,"too many spans:"..#spans)
 			
-			local s0,s1=spans[1]
-			for i=2,#spans do
+			local head=spans.next
+			local i=0
+			while head do
+				local next=head.next
+				if next then
+					rectfill(head.x,y,next.x,y,head.c)
+				end
+				head=next
+			end
+			--[[
+			local s0,s1=spans.next
+			while s0 do
 				s1=spans[i]
 				if s0 then
 					if s1.c==s0.c then
@@ -664,7 +652,7 @@ function convex_zbuf_rasterizer()
 					s0=s1
 				end
 			end
-			
+			]]
 			-- handle last span
 			if s1 and s0 then
 			end
