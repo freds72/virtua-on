@@ -9,11 +9,12 @@ local razz
 
 function _init()
  razz={
-		--edge_rasterizer,
+		edge_rasterizer,
 		--poly_rasterizer,
 		trifill_rasterizer,
 		--hybrid_rasterizer,
-		convex_rasterizer
+		convex_rasterizer,
+		convex_zbuf_rasterizer
 	}
  --raz=edge_rasterizer()
  --raz=poly_rasterizer()
@@ -40,16 +41,17 @@ function _update()
 	local cc,ss=cos(angle),-sin(angle)
 	local scale=15
 	local function rotate(x,y)
-		x-=2
-		y-=2
+		x-=0.5
+		y-=0.5
 		return 64+scale*(x*ss-y*cc),64+scale*(x*cc+y*ss)
 	end
 	for i=0,15 do
-		local x,y=i%4,flr(i/4)
-		local x0,y0=rotate(x,y)
-		local x1,y1=rotate(x+1,y)
+		local x,y=0,0--i%4,flr(i/4)
+		cc,ss=cos(angle+i/16),-sin(angle+i/16)
+		local x0,y0=rotate(x-1,y-1)
+		local x1,y1=rotate(x+1,y-1)
 		local x2,y2=rotate(x+1,y+1)
-		local x3,y3=rotate(x,y+1)
+		local x3,y3=rotate(x-1,y+1)
 		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},i,i)
  end
  
@@ -505,6 +507,171 @@ function convex_rasterizer()
   	end
   	poly={}
 end
+}
+end
+
+function sort(_data)  
+	local _len,buffer1,buffer2,idx=#_data,_data,{},{}
+
+	-- radix shift
+	for shift=0,5,5 do
+		-- faster than for each/zeroing count array
+		memset(0x4300,0,32)
+
+		for i,b in pairs(buffer1) do
+			local c=0x4300+((b.x>>shift)&31)
+			poke(c,@c+1)
+			idx[i]=c
+		end
+				
+		-- shifting array
+		local c0=peek(0x4300)
+		for mem=0x4301,0x431f do
+			local c1=@mem+c0
+			poke(mem,c1)
+			c0=c1
+		end
+
+		for i=_len,1,-1 do
+			local c=@idx[i]
+			buffer2[c] = buffer1[i]
+			poke(idx[i],c-1)
+		end
+
+		buffer1, buffer2 = buffer2, buffer1
+	end
+end
+
+function convex_zbuf_rasterizer()
+	local poly={}
+	
+	local screen_cls={
+		__index=function(t,k)
+			-- head of stack
+			-- todo: try with a stack
+			local spans={}
+			t[k]=spans
+			return spans
+		end
+	}
+	-- all spans
+	local screen=setmetatable({},screen_cls)
+
+	local function insert(spans,span)
+		local x0,mini=span.x,1
+		for i=1,#spans do
+			mini=i
+			if(x0>spans[i].x) break
+		end
+		-- shift right
+		for i=#spans,mini,-1 do
+			spans[i+1]=spans[i]
+		end
+		-- insert
+		spans[mini]=span
+	end
+	
+	return {
+	name="edge+sub-pix+zbuf",
+	-- add edge
+	add=function(self,v,c,z)
+		local v0,screen=v[#v],screen
+		local x0,y0=v0[1],v0[2]
+		for i=1,#v do
+			local v1=v[i]
+			local x1,y1=v1[1],v1[2]
+			local _x1,_y1=x1,y1
+			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+			local cy0,dx=ceil(y0),(x1-x0)/(y1-y0)
+			if(y0<0) x0-=y0*dx y0=0
+   		x0+=(cy0-y0)*dx
+			for y=cy0,min(ceil(y1)-1,127) do
+				add(screen[y],{x=ceil(x0),c=c,z=z})
+				--[[
+				local spans=screen[y]
+				local mini=1
+				for i=1,#spans do
+					mini=i
+					if(x0>spans[i].x) break
+				end
+				-- shift right
+				for i=#spans,mini,-1 do
+					spans[i+1]=spans[i]
+				end
+				-- insert
+				spans[mini]={x=x0,c=c,z=z}
+				]]
+
+				x0+=dx					
+			end			
+			x0,y0=_x1,_y1
+		end
+	end,
+	 draw=function(self)
+		for y,spans in pairs(screen) do
+			-- sort spans
+			-- sort(spans)
+
+			local _len,buffer1,buffer2,idx=#spans,spans,{},{}
+			-- radix shift
+			for shift=0,4,4 do
+				-- faster than for each/zeroing count array
+				memset(0x4300,0,16)
+
+				for i,b in pairs(buffer1) do
+					local c=0x4300+((b.x>>shift)&0xf)
+					poke(c,@c+1)
+					idx[i]=c
+				end
+						
+				-- shifting array
+				local c0=peek(0x4300)
+				for mem=0x4301,0x430f do
+					local c1=@mem+c0
+					poke(mem,c1)
+					c0=c1
+				end
+
+				for i=_len,1,-1 do
+					local c=@idx[i]
+					buffer2[c] = buffer1[i]
+					poke(idx[i],c-1)
+				end
+
+				buffer1, buffer2 = buffer2, buffer1
+			end
+			
+			-- assert(#spans<33,"too many spans:"..#spans)
+			
+			local s0,s1=spans[1]
+			for i=2,#spans do
+				s1=spans[i]
+				if s0 then
+					if s1.c==s0.c then
+						-- end of s0 span?
+						rectfill(s0.x,y,s1.x,y,s0.c)
+						-- no active span
+						s0=nil
+					elseif s1.z>s0.z then
+						-- new span above?
+						-- terminate current
+						rectfill(s0.x,y,s1.x,y,s0.c)
+						-- active start
+						s0=s1
+					end
+				else
+					-- new 'start'
+					s0=s1
+				end
+			end
+			
+			-- handle last span
+			if s1 and s0 then
+			end
+		end
+		-- reset screen buffer
+		screen=setmetatable({},screen_cls)
+	end
 }
 end
 
