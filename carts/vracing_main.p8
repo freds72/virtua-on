@@ -270,7 +270,7 @@ local goal_music=3
 function to_tile_coords(v)
 	local x,y=(v[1]>>3)+16,(v[3]>>3)+16
 	-- slightly faster than flr
-	return x&0xffff,y&0xffff,x,y
+	return x\1,y\1,x,y
 end
 
 -- camera
@@ -378,7 +378,7 @@ function make_cam()
 		end,
 		visible_tiles=function(self)
 			local x0,y0,x,y=to_tile_coords(self.pos)
-			local tiles,angle,max_dist,dfar={[x0|y0<<5]=0},self.angle,flr(max_dist),dfar
+			local tiles,angle,max_dist,dfar={[x0|y0<<5]=0},self.angle,max_dist\1,dfar
    
    		for i,a in pairs(angles) do
 				local v,u=cos(a+angle),-sin(a+angle)
@@ -975,8 +975,7 @@ function play_state(checkpoints,cam_checkpoints)
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 		npc.spr=37+(i%4)
 	end
-
-
+	
 	-- reset cam	
 	cam=make_cam()
 	
@@ -1009,7 +1008,7 @@ function play_state(checkpoints,cam_checkpoints)
 			printf(tostr(ceil(remaining_t/30)),nil,-55,xlfont)
 			
 			-- speed
-			printf(tostr(flr(plyr:get_speed())),-33,50,xlfont)
+			printf(tostr(plyr:get_speed()\1),-33,50,xlfont)
 			printr("km/h",-32,57,10,9)
 
 			-- 1/2/3...
@@ -1465,7 +1464,7 @@ function _draw()
 
 	--[[
 	local y=-32
-	print(stat(1).."\n"..update_cpu.."(u)\n"..stat(0),-62,y+2,0)
+	print(stat(1).."\n"..stat(0),-62,y+2,0)
 	]]
 end
 
@@ -1732,14 +1731,14 @@ function polyfill(p,col)
 		local x1,y1=p1.x,p1.y
 		-- backup before any swap
 		local _x1,_y1=x1,y1
-		if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+		if(y0>y1) x1=x0 y1=y0 x0=_x1 y0=_y1
 		-- exact slope
 		local dx=(x1-x0)/(y1-y0)
 		if(y0<-64) x0-=(y0+64)*dx y0=-64
 		-- subpixel shifting (after clipping)
-		local cy0=ceil(y0)
+		local cy0=y0\1+1
 		x0+=(cy0-y0)*dx
-		for y=cy0,min(ceil(y1)-1,63) do
+		for y=cy0,min(y1\1,63) do
 			local x=nodes[y]
 			if x then
 				rectfill(x,y,x0,y)
@@ -1749,7 +1748,8 @@ function polyfill(p,col)
 			x0+=dx
 		end
 		-- next vertex
-		x0,y0=_x1,_y1
+		x0=_x1
+		y0=_y1
 	end
 end
 
@@ -1775,7 +1775,8 @@ function z_poly_clip(znear,v)
 			nv.y=-(nv[2]/nv[3])<<6 
 			res[#res+1]=nv
 		end
-		v0,d0=v1,d1
+		v0=v1
+		d0=d1
 	end
 	return res
 end
@@ -1783,7 +1784,7 @@ end
 -->8
 -- print helpers
 function padding(n)
-	n=tostr(flr(min(n,99)))
+	n=tostr(min(n,99)\1)
 	return sub("00",1,2-#n)..n
 end
 
