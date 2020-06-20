@@ -16,7 +16,7 @@ function make_v(a,b)
 		b[3]-a[3]}
 end
 function v_clone(v)
-	return {v[1],v[2],v[3]}
+	return pack(unpack(v))
 end
 function v_dot(a,b)
 	return a[1]*b[1]+a[2]*b[2]+a[3]*b[3]
@@ -41,13 +41,13 @@ function v_len(v)
 	x/=d
 	y/=d
 	z/=d
-	return d*(x*x+y*y+z*z)^0.5
+	return d*sqrt(x*x+y*y+z*z)
 end
 function v_normz(v)
 	local x,y,z=v[1],v[2],v[3]
 	local d=x*x+y*y+z*z
 	if d>0.001 then
-		d=d^.5
+		d=sqrt(d)
 		return {x/d,y/d,z/d}
 	end
 	return v
@@ -89,7 +89,7 @@ function make_q(v,angle)
 end
 
 function m_from_q(q)
-	local x,y,z,w=q[1],q[2],q[3],q[4]
+	local x,y,z,w=unpack(q)
 	local x2,y2,z2=x+x,y+y,z+z
 	local xx,xy,xz=x*x2,x*y2,x*z2
 	local yy,yz,zz=y*y2,y*z2,z*z2
@@ -109,24 +109,20 @@ function m_x_v(m,v)
 end
 -- optimized 4x4 matrix mulitply
 function m_x_m(a,b)
-	local a11,a12,a13,a21,a22,a23,a31,a32,a33=a[1],a[5],a[9],a[2],a[6],a[10],a[3],a[7],a[11]
-	local b11,b12,b13,b14,b21,b22,b23,b24,b31,b32,b33,b34=b[1],b[5],b[9],b[13],b[2],b[6],b[10],b[14],b[3],b[7],b[11],b[15]
+	local a11,a21,a31,_,a12,a22,a32,_,a13,a23,a33,_,a14,a24,a34=unpack(a)
+	local b11,b21,b31,_,b12,b22,b32,_,b13,b23,b33,_,b14,b24,b34=unpack(b)
 
 	return {
 			a11*b11+a12*b21+a13*b31,a21*b11+a22*b21+a23*b31,a31*b11+a32*b21+a33*b31,0,
 			a11*b12+a12*b22+a13*b32,a21*b12+a22*b22+a23*b32,a31*b12+a32*b22+a33*b32,0,
 			a11*b13+a12*b23+a13*b33,a21*b13+a22*b23+a23*b33,a31*b13+a32*b23+a33*b33,0,
-			a11*b14+a12*b24+a13*b34+a[13],a21*b14+a22*b24+a23*b34+a[14],a31*b14+a32*b24+a33*b34+a[15],1
+			a11*b14+a12*b24+a13*b34+a14,a21*b14+a22*b24+a23*b34+a24,a31*b14+a32*b24+a33*b34+a34,1
 		}
 end
 function m_clone(m)
-	return {
-		m[1],m[2],m[3],0,
-		m[5],m[6],m[7],0,
-		m[9],m[10],m[11],0,
-		m[13],m[14],m[15],1
-	}
+	return pack(unpack(m))
 end
+
 function make_m_from_euler(x,y,z)
 		local a,b = cos(x),-sin(x)
 		local c,d = cos(y),-sin(y)
@@ -558,7 +554,7 @@ function make_car(model_name,lod_id,p,angle,track)
 			if(rear_slide==true) do_skidmarks(self,rear_emitters)
 		end,
 		get_speed=function(self)
-			return 250*3.6*(v_dot(velocity,velocity)^0.5)
+			return 250*3.6*sqrt(v_dot(velocity,velocity))
 		end,
 		steer=function(self,steering_dt,rpm,braking)
 			steering_angle+=steering_dt
@@ -975,7 +971,7 @@ function play_state(checkpoints,cam_checkpoints)
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 		npc.spr=37+(i%4)
 	end
-	
+
 	-- reset cam	
 	cam=make_cam()
 	
@@ -1273,7 +1269,6 @@ end
 local v_cache_cls={
 	-- v is vertex reference
 	__index=function(t,v)
-		if(not v) return
 		-- inline: local a=m_x_v(t.m,t.v[k]) 
 		local m,x,y,z=t.m,v[1],v[2],v[3]
 		local ax,ay,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]
@@ -1300,7 +1295,8 @@ function collect_faces(faces,cam_pos,v_cache,out,colors)
 		-- avoid overdraw for shared faces
 		if face.session!=sessionid and (face.flags&0x1==0x1 or v_dot(face.n,cam_pos)>face.cp) then
 			-- project vertices
-			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]			
+			local v4=face[4]
+			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v4 and v_cache[v4]			
 			-- mix of near/far verts?
 			if v0.outcode&v1.outcode&v2.outcode&(v3 and v3.outcode or 0xffff)==0 then
 				local verts={v0,v1,v2,v3}
@@ -1396,14 +1392,15 @@ function draw_faces(faces,v_cache)
 			if main_face.inner then -- d.dist<2 then
 				-- reuse array
 				for _,face in pairs(main_face.inner) do
-					draw_face(v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]],face.c)
+					local v4=face[4]
+					draw_face(v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v4 and v_cache[v4],face.c)
 				end
 			end
 			-- face skidmarks
 			if main_face.skidmarks then
 				local m=v_cache.m
 				for _,skids in pairs(main_face.skidmarks) do
-					local s_cache=setmetatable({m=v_cache.m,},v_cache_cls)
+					local s_cache=setmetatable({m=m},v_cache_cls)
 					draw_face(s_cache[skids[1]],s_cache[skids[2]],s_cache[skids[4]],s_cache[skids[3]],0x1150.a5a5)
 				end
 			end
@@ -1462,10 +1459,8 @@ function _draw()
 	-- hud and game state display
 	draw_state()
 
-	--[[
 	local y=-32
-	print(stat(1).."\n"..stat(0),-62,y+2,0)
-	]]
+	print(stat(1),-62,y+2,0)
 end
 
 -->8
