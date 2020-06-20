@@ -16,7 +16,7 @@ function make_v(a,b)
 		b[3]-a[3]}
 end
 function v_clone(v)
-	return {v[1],v[2],v[3]}
+	return pack(unpack(v))
 end
 function v_dot(a,b)
 	return a[1]*b[1]+a[2]*b[2]+a[3]*b[3]
@@ -41,13 +41,13 @@ function v_len(v)
 	x/=d
 	y/=d
 	z/=d
-	return d*(x*x+y*y+z*z)^0.5
+	return d*sqrt(x*x+y*y+z*z)
 end
 function v_normz(v)
 	local x,y,z=v[1],v[2],v[3]
 	local d=x*x+y*y+z*z
 	if d>0.001 then
-		d=d^.5
+		d=sqrt(d)
 		return {x/d,y/d,z/d}
 	end
 	return v
@@ -89,7 +89,7 @@ function make_q(v,angle)
 end
 
 function m_from_q(q)
-	local x,y,z,w=q[1],q[2],q[3],q[4]
+	local x,y,z,w=unpack(q)
 	local x2,y2,z2=x+x,y+y,z+z
 	local xx,xy,xz=x*x2,x*y2,x*z2
 	local yy,yz,zz=y*y2,y*z2,z*z2
@@ -109,24 +109,20 @@ function m_x_v(m,v)
 end
 -- optimized 4x4 matrix mulitply
 function m_x_m(a,b)
-	local a11,a12,a13,a21,a22,a23,a31,a32,a33=a[1],a[5],a[9],a[2],a[6],a[10],a[3],a[7],a[11]
-	local b11,b12,b13,b14,b21,b22,b23,b24,b31,b32,b33,b34=b[1],b[5],b[9],b[13],b[2],b[6],b[10],b[14],b[3],b[7],b[11],b[15]
+	local a11,a21,a31,_,a12,a22,a32,_,a13,a23,a33,_,a14,a24,a34=unpack(a)
+	local b11,b21,b31,_,b12,b22,b32,_,b13,b23,b33,_,b14,b24,b34=unpack(b)
 
 	return {
 			a11*b11+a12*b21+a13*b31,a21*b11+a22*b21+a23*b31,a31*b11+a32*b21+a33*b31,0,
 			a11*b12+a12*b22+a13*b32,a21*b12+a22*b22+a23*b32,a31*b12+a32*b22+a33*b32,0,
 			a11*b13+a12*b23+a13*b33,a21*b13+a22*b23+a23*b33,a31*b13+a32*b23+a33*b33,0,
-			a11*b14+a12*b24+a13*b34+a[13],a21*b14+a22*b24+a23*b34+a[14],a31*b14+a32*b24+a33*b34+a[15],1
+			a11*b14+a12*b24+a13*b34+a14,a21*b14+a22*b24+a23*b34+a24,a31*b14+a32*b24+a33*b34+a34,1
 		}
 end
 function m_clone(m)
-	return {
-		m[1],m[2],m[3],0,
-		m[5],m[6],m[7],0,
-		m[9],m[10],m[11],0,
-		m[13],m[14],m[15],1
-	}
+	return pack(unpack(m))
 end
+
 function make_m_from_euler(x,y,z)
 		local a,b = cos(x),-sin(x)
 		local c,d = cos(y),-sin(y)
@@ -192,7 +188,7 @@ function sort(data)
 	if(n<2) return
 	
 	-- form a max heap
-	for i = flr(n / 2) + 1, 1, -1 do
+	for i = n\2+1, 1, -1 do
 	 -- m is the index of the max child
 	 local parent, value, m = i, data[i], i + i
 	 local key = value.key 
@@ -249,7 +245,7 @@ local actors={}
 local sessionid=0
 local k_far,k_near=0,2
 local k_right,k_left=4,8
-local z_near=1
+local z_near,dfar=1,1
 
 -- fonts
 local xlfont={
@@ -268,9 +264,9 @@ local goal_music=3
 
 -- voxel helpers
 function to_tile_coords(v)
-	local x,y=shr(v[1],3)+16,shr(v[3],3)+16
+	local x,y=(v[1]>>3)+16,(v[3]>>3)+16
 	-- slightly faster than flr
-	return band(0xffff,x),band(0xffff,y),x,y
+	return x\1,y\1,x,y
 end
 
 -- camera
@@ -378,9 +374,9 @@ function make_cam()
 		end,
 		visible_tiles=function(self)
 			local x0,y0,x,y=to_tile_coords(self.pos)
-			local tiles,angle,max_dist={[x0+shl(y0,5)]=0},self.angle,flr(max_dist)
+			local tiles,angle,max_dist,dfar={[x0|y0<<5]=0},self.angle,max_dist\1,dfar
    
-   			for i,a in pairs(angles) do
+   		for i,a in pairs(angles) do
 				local v,u=cos(a+angle),-sin(a+angle)
 				
 				local mapx,mapy,ddx,ddy,mapdx,mapdy,distx,disty=x0,y0,1/u,1/v,1,1
@@ -399,7 +395,7 @@ function make_cam()
 					disty=(mapy+1-y)*ddy
 				end
 
-				for dist=0,1 do
+				for dist=0,dfar do
 					if distx<disty then
 						distx+=ddx
 						mapx+=mapdx
@@ -408,8 +404,8 @@ function make_cam()
 						mapy+=mapdy
 					end
 					-- non solid visible tiles
-					if band(bor(mapx,mapy),0xffe0)==0 then
-						tiles[mapx+shl(mapy,5)]=dist
+					if (mapx|mapy)&0xffe0==0 then
+						tiles[mapx|mapy<<5]=dist
 					end
 				end				
 			end	
@@ -650,7 +646,7 @@ function make_car(model_name,lod_id,p,angle,track)
 			end
 			-- on ground: limit max speed
 			max_rpm=0.6		
-			if oldf and band(oldf.flags,0x4)==0 then
+			if oldf and oldf.flags&0x4==0 then
 				max_rpm=0.4
 			end
 			-- above 0
@@ -716,15 +712,15 @@ function make_plyr(p,angle,track)
 		rpm*=0.97
 
 		local vol=self:get_speed()/400
-		local rpmvol=band(0x3f,flr(32*vol))
+		local rpmvol=flr(32*vol)&0x3f
 		-- sfx 0
 		local addr=0x3200+68*0
 		-- adjust pitch
-		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+		poke(addr,bor(peek(addr)&0xc0,rpmvol))
 		-- base engine
 		rpmvol=max(8,rpmvol-2)
 		addr+=2
-		poke(addr,bor(band(peek(addr),0xc0),rpmvol))
+		poke(addr,bor(peek(addr)&0xc0,rpmvol))
 		-- ensure engine sound is playing
 		local fix_engine=true
 		for i=16,19 do
@@ -734,7 +730,7 @@ function make_plyr(p,angle,track)
 
 		-- rough terrain?
 		local ground=self:get_ground()		
-		if ground and band(ground.flags,0x4)==0 then
+		if ground and ground.flags&0x4==0 then
 			local shake_force=self:get_speed()/200
 			cam:shake(rnd(shake_force),rnd(shake_force),1)
 			-- random noise (avoid noise if not rolling)
@@ -934,7 +930,7 @@ function find_face(p,oldf)
 		if(newf) return newf,newp
 	end
 	-- voxel?
-	local x,z=flr(shr(p[1],3)+16),flr(shr(p[3],3)+16)
+	local x,z=((p[1]>>3)+16)\1,((p[3]>>3)+16)\1
 	local faces=track.ground[x+shl(z,5)]
 	if faces then
 		for _,f in pairs(faces) do
@@ -1024,7 +1020,7 @@ function play_state(checkpoints,cam_checkpoints)
 			printf(tostr(ceil(remaining_t/30)),nil,-55,xlfont)
 			
 			-- speed
-			printf(tostr(flr(plyr:get_speed())),-33,50,xlfont)
+			printf(tostr(plyr:get_speed()\1),-33,50,xlfont)
 			printr("km/h",-32,57,10,9)
 
 			-- 1/2/3...
@@ -1216,9 +1212,20 @@ function gameover_state(win,total_t,rank)
 		end
 end
 
+function high_draw_dist()
+	dfar=2	
+	menuitem(2, "draw dist: high",low_draw_dist)
+end
+function low_draw_dist()
+	dfar=1	
+	menuitem(2, "draw dist: low",high_draw_dist)
+end
+
 function _init()
 	cartdata("freds72_vracing")
 	menuitem(1, "reset records", function() for i=0,3 do dset(i,0) end end)
+	-- set draw distance menu
+	low_draw_dist()
 
 	-- integrated fillp/color
 	poke(0x5f34,1)
@@ -1234,7 +1241,7 @@ function _init()
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=0
+		track_id=2
 	end
 	
 	-- load regular 3d models
@@ -1278,7 +1285,6 @@ end
 local v_cache_cls={
 	-- v is vertex reference
 	__index=function(t,v)
-		if(not v) return
 		-- inline: local a=m_x_v(t.m,t.v[k]) 
 		local m,x,y,z=t.m,v[1],v[2],v[3]
 		local ax,ay,az=m[1]*x+m[5]*y+m[9]*z+m[13],m[2]*x+m[6]*y+m[10]*z+m[14],m[3]*x+m[7]*y+m[11]*z+m[15]
@@ -1287,9 +1293,13 @@ local v_cache_cls={
 		if(az>z_near) outcode=k_far
 		if(ax>az) outcode+=k_right
 		if(-ax>az) outcode+=k_left
-		
+
+		-- not faster :/
+		-- local bo=-(((az-z_near)>>31)<<17)-(((az-ax)>>31)<<18)-(((az+ax)>>31)<<19)
+		-- assert(bo==outcode,"outcode:"..outcode.." bits:"..bo)
+
 		-- assume vertex is visible, compute 2d coords
-		local a={ax,ay,az,outcode=outcode,clipcode=band(outcode,2),x=shl(ax/az,6),y=-shl(ay/az,6)} 
+		local a={ax,ay,az,outcode=outcode,clipcode=outcode&2,x=(ax/az)<<6,y=-(ay/az)<<6} 
 		t[v]=a
 		return a
 	end
@@ -1299,11 +1309,12 @@ function collect_faces(faces,cam_pos,v_cache,out,colors)
 	local sessionid=sessionid
 	for _,face in pairs(faces) do
 		-- avoid overdraw for shared faces
-		if face.session!=sessionid and (band(face.flags,1)>0 or v_dot(face.n,cam_pos)>face.cp) then
+		if face.session!=sessionid and (face.flags&0x1==0x1 or v_dot(face.n,cam_pos)>face.cp) then
 			-- project vertices
-			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]]			
+			local v4=face[4]
+			local v0,v1,v2,v3=v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v4 and v_cache[v4]			
 			-- mix of near/far verts?
-			if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
+			if v0.outcode&v1.outcode&v2.outcode&(v3 and v3.outcode or 0xffff)==0 then
 				local verts={v0,v1,v2,v3}
 
 				local ni,is_clipped,y,z=9,v0.clipcode+v1.clipcode+v2.clipcode,v0[2]+v1[2]+v2[2],v0[3]+v1[3]+v2[3]
@@ -1380,7 +1391,7 @@ end
 -- draw face
 -- handles clipping as needed
 function draw_face(v0,v1,v2,v3,col)
-	if band(v0.outcode,band(v1.outcode,band(v2.outcode,v3 and v3.outcode or 0xffff)))==0 then
+	if v0.outcode&v1.outcode&v2.outcode&(v3 and v3.outcode or 0xffff)==0 then
 		local verts={v0,v1,v2,v3}
 		if(v0.clipcode+v1.clipcode+v2.clipcode+(v3 and v3.clipcode or 0)>0) verts=z_poly_clip(z_near,verts)
 		if(#verts>2) polyfill(verts,col)
@@ -1388,8 +1399,7 @@ function draw_face(v0,v1,v2,v3,col)
 end
 
 function draw_faces(faces,v_cache)
-	for i=1,#faces do
-		local d=faces[i]
+	for i,d in ipairs(faces) do
 		local main_face=d.f
 		polyfill(d,d.c)
 		-- details?
@@ -1398,14 +1408,15 @@ function draw_faces(faces,v_cache)
 			if main_face.inner then -- d.dist<2 then
 				-- reuse array
 				for _,face in pairs(main_face.inner) do
-					draw_face(v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v_cache[face[4]],face.c)
+					local v4=face[4]
+					draw_face(v_cache[face[1]],v_cache[face[2]],v_cache[face[3]],v4 and v_cache[v4],face.c)
 				end
 			end
 			-- face skidmarks
 			if main_face.skidmarks then
 				local m=v_cache.m
 				for _,skids in pairs(main_face.skidmarks) do
-					local s_cache=setmetatable({m=v_cache.m,},v_cache_cls)
+					local s_cache=setmetatable({m=m},v_cache_cls)
 					draw_face(s_cache[skids[1]],s_cache[skids[2]],s_cache[skids[4]],s_cache[skids[3]],0x1150.a5a5)
 				end
 			end
@@ -1449,7 +1460,7 @@ function _draw()
 		-- is model visible?
 		-- (e.g. voxel tile is visible)
 		local x0,y0=to_tile_coords(pos)
-		if tiles[x0+shl(y0,5)] then
+		if tiles[x0|y0<<5] then
 			local m=actor:get_orient()
 			m_set_pos(m,pos)
 			-- car
@@ -1723,7 +1734,6 @@ end
 function polyfill(p,col)
 	color(col)
 	local p0,nodes=p[#p],{}
-	-- band vs. flr: -0.20%
 	local x0,y0=p0.x,p0.y
 
 	for i=1,#p do
@@ -1731,14 +1741,14 @@ function polyfill(p,col)
 		local x1,y1=p1.x,p1.y
 		-- backup before any swap
 		local _x1,_y1=x1,y1
-		if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+		if(y0>y1) x1=x0 y1=y0 x0=_x1 y0=_y1
 		-- exact slope
 		local dx=(x1-x0)/(y1-y0)
 		if(y0<-64) x0-=(y0+64)*dx y0=-64
 		-- subpixel shifting (after clipping)
-		local cy0=ceil(y0)
+		local cy0=y0\1+1
 		x0+=(cy0-y0)*dx
-		for y=cy0,min(ceil(y1)-1,63) do
+		for y=cy0,min(y1\1,63) do
 			local x=nodes[y]
 			if x then
 				rectfill(x,y,x0,y)
@@ -1748,7 +1758,8 @@ function polyfill(p,col)
 			x0+=dx
 		end
 		-- next vertex
-		x0,y0=_x1,_y1
+		x0=_x1
+		y0=_y1
 	end
 end
 
@@ -1763,18 +1774,19 @@ function z_poly_clip(znear,v)
 		if d1>0 then
 			if d0<=0 then
 				local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-				nv.x=shl(nv[1]/nv[3],6)
-				nv.y=-shl(nv[2]/nv[3],6) 
+				nv.x=(nv[1]/nv[3])<<6
+				nv.y=-(nv[2]/nv[3])<<6 
 				res[#res+1]=nv
 			end
 			res[#res+1]=v1
 		elseif d0>0 then
 			local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-			nv.x=shl(nv[1]/nv[3],6)
-			nv.y=-shl(nv[2]/nv[3],6) 
+			nv.x=(nv[1]/nv[3])<<6
+			nv.y=-(nv[2]/nv[3])<<6 
 			res[#res+1]=nv
 		end
-		v0,d0=v1,d1
+		v0=v1
+		d0=d1
 	end
 	return res
 end
@@ -1782,25 +1794,25 @@ end
 -->8
 -- print helpers
 function padding(n)
-	n=tostr(flr(min(n,99)))
+	n=tostr(min(n,99)\1)
 	return sub("00",1,2-#n)..n
 end
 
 -- frames per sec to human time
 function time_tostr(t)
 	-- note: assume minutes doesn't go > 9
-	return flr(t/1800).."'"..padding(flr(t/30)%60).."''"..padding(flr(10*t/3)%100)
+	return (t\1800).."'"..padding((t\30)%60).."''"..padding(flr(10*t/3)%100)
 end
 
 function printb(s,x,y,c1,c2)
-	x=x or -shl(#s,1)
+	x=x or -(#s<<1)
 	?s,x,y+1,c2 or 1
 	?s,x,y,c1
 end
 
 -- raised print
 function printr(s,x,y,c,c2)
-	x=x or -shl(#s,1)
+	x=x or -(#s<<1)
 	local sy=c2 and -2 or -1
 	for i=-1,1 do
         for j=sy,1 do

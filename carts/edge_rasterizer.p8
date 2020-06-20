@@ -11,9 +11,11 @@ function _init()
  razz={
 		--edge_rasterizer,
 		--poly_rasterizer,
-		trifill_rasterizer,
+		--trifill_rasterizer,
 		--hybrid_rasterizer,
-		convex_rasterizer
+		-- convex_rasterizer,
+		poke_rasterizer
+		--convex_zbuf_rasterizer
 	}
  --raz=edge_rasterizer()
  --raz=poly_rasterizer()
@@ -36,23 +38,25 @@ function _update()
 	 raz=razz[mode+1]()
 	end
 	 
-	angle+=1/(30*8)
+	angle+=0.001
 	local cc,ss=cos(angle),-sin(angle)
-	local scale=15
+	local scale=0.8
 	local function rotate(x,y)
-		x-=2
-		y-=2
+		x-=64
+		y-=64
 		return 64+scale*(x*ss-y*cc),64+scale*(x*cc+y*ss)
 	end
-	for i=0,15 do
-		local x,y=i%4,flr(i/4)
-		local x0,y0=rotate(x,y)
-		local x1,y1=rotate(x+1,y)
-		local x2,y2=rotate(x+1,y+1)
-		local x3,y3=rotate(x,y+1)
-		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},i,i)
- end
- 
+
+	-- back
+	for i=1,20 do
+		cc,ss=cos(angle+i*0.12),-sin(angle+i*0.12)
+		local x0,y0=rotate(24,24)
+		local x1,y1=rotate(96,24)
+		local x2,y2=rotate(96,112)
+		local x3,y3=rotate(24,112)
+		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},i%15+1,i)
+	end
+	
 end
 
 function _draw()
@@ -487,10 +491,10 @@ function convex_rasterizer()
 			local x1,y1=v1[1],v1[2]
 			local _x1,_y1=x1,y1
 			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-			local cy0,cy1,dx=ceil(y0),ceil(y1),(x1-x0)/(y1-y0)
+			local cy0,cy1,dx=y0\1+1,y1\1,(x1-x0)/(y1-y0)
 			if(y0<0) x0-=y0*dx y0=0
-   			x0+=(cy0-y0)*dx
-			for y=cy0,min(cy1-1,127) do
+   		x0+=(-y0+cy0)*dx
+			for y=cy0,min(cy1,127) do
 				local x=nodes[y]
 				if x then
 				 rectfill(x,y,x0,y)
@@ -505,6 +509,221 @@ function convex_rasterizer()
   	end
   	poly={}
 end
+}
+end
+
+-->8
+-- poke-based2 rasterizer
+function poke_rasterizer()
+	local poly={}
+	
+	local cache_cls={
+		__index=function(t,k)
+			local f=function(a)
+				t[k]=function(b)
+					rectfill(a,k,b,k)
+				end
+			end  
+			--t[k]=f
+			return f
+		end
+	}
+	return {
+	name="poke2",
+	-- add edge
+	add=function(self,verts,c,z)
+		add(poly,{v=verts,c=c})
+	end,
+ draw=function(self)
+	for k=1,#poly do
+		local p=poly[k]
+		local v,c=p.v,p.c
+
+		local v0,nodes=v[#v],{} -- setmetatable({},cache_cls)
+		local x0,y0=v0[1],v0[2]
+		for i=1,#v do
+			local v1=v[i]
+			local x1,y1=v1[1],v1[2]
+			local _x1,_y1=x1,y1
+			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+			local cy0,cy1,dx=y0\1+1,y1\1,(x1-x0)/(y1-y0)
+			if(y0<0) x0-=y0*dx y0=0
+   		x0+=(-y0+cy0)*dx
+			for y=cy0,min(cy1,127) do
+				local x=nodes[y]
+				if x then
+					local x0,x1=x\1,x0\1
+					if(x0>x1) x0,x1=x1,x0 
+					-- odd boundary?
+					local m=0x6000|y<<6
+					local m0,m1,c=m|x0\2,m|((x1-(x1&3))\2),c*0x1111
+					if(x0&1==1) poke(m0,@m0&0xf|c<<4) m0+=1
+					-- shift to boundary
+					for i=m0,m1-1,2 do
+						poke2(i,c)
+					end
+					-- remaining 0-4 pixels
+					-- adjust end
+					if m1-m0+1>0 then
+						local c0,mask=@@m1,0xf.ffff<<((x1&3)<<2)
+						poke2(m1,c0&~mask|c&mask)
+					end
+					--pset(x1,y,8)
+				else
+				 nodes[y]=x0
+				end
+				x0+=dx					
+			end			
+			--break
+			x0,y0=_x1,_y1
+		end
+  	end
+  	poly={}
+end
+}
+end
+
+function sort(_data)  
+	local _len,buffer1,buffer2,idx=#_data,_data,{},{}
+
+	-- radix shift
+	for shift=0,5,5 do
+		-- faster than for each/zeroing count array
+		memset(0x4300,0,32)
+
+		for i,b in pairs(buffer1) do
+			local c=0x4300+((b.x>>shift)&31)
+			poke(c,@c+1)
+			idx[i]=c
+		end
+				
+		-- shifting array
+		local c0=peek(0x4300)
+		for mem=0x4301,0x431f do
+			local c1=@mem+c0
+			poke(mem,c1)
+			c0=c1
+		end
+
+		for i=_len,1,-1 do
+			local c=@idx[i]
+			buffer2[c] = buffer1[i]
+			poke(idx[i],c-1)
+		end
+
+		buffer1, buffer2 = buffer2, buffer1
+	end
+end
+-- ref:
+-- https://www.phatcode.net/res/224/files/html/ch67/67-03.html
+
+function convex_zbuf_rasterizer()
+	local poly={}
+	
+	local screen_cls={
+		__index=function(t,k)
+			-- head of stack
+			local head={x=-32000}
+			t[k]=head
+			return head
+		end
+	}
+	-- all spans
+	local screen=setmetatable({},screen_cls)
+
+	local function insert(spans,span)
+		local x0,mini=span.x,1
+		for i=1,#spans do
+			mini=i
+			if(x0>spans[i].x) break
+		end
+		-- shift right
+		for i=#spans,mini,-1 do
+			spans[i+1]=spans[i]
+		end
+		-- insert
+		spans[mini]=span
+	end
+	
+	return {
+	name="edge+sub-pix+zbuf",
+	-- add edge
+	add=function(self,v,c,z)
+		local v0,spans,screen=v[#v],{},screen
+		local x0,y0=v0[1],v0[2]
+		for i=1,#v do
+			local v1=v[i]
+			local x1,y1=v1[1],v1[2]
+			local _x1,_y1=x1,y1
+			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+			local cy0,dx=ceil(y0),(x1-x0)/(y1-y0)
+			if(y0<0) x0-=y0*dx y0=0
+   		x0+=(cy0-y0)*dx
+			for y=cy0,min(ceil(y1)-1,127) do
+				local span=spans[y]
+				if span then
+					local x0,x1=x0,span.x
+					if(x0>x1) x0,x1=x1,x0
+					-- get start of linked list
+					local head=screen[y]
+					local prev=head
+					while head and head.x<x0 do
+						prev,head=head,head.next
+					end
+					-- insert start of span
+					head={x=x0,x1=x1,c=c,z=z,next=prev.next}
+					prev.next,prev=head,head
+					-- insert end of span
+					while head and head.x<x1 do
+						prev,head=head,head.next
+					end
+					prev.next={x=x1,x0=x0,c=c,z=z,next=prev.next}
+				else
+					spans[y]={x=x0}
+				end
+				x0+=dx					
+			end			
+			x0,y0=_x1,_y1
+		end
+	end,
+	 draw=function(self)
+		for y,spans in pairs(screen) do
+			local head,start=spans.next
+			while head do
+				if not start then
+					start=head
+				else
+					-- 'pair' event
+					if head.z>start.z then
+						-- new "foreground" span
+						rectfill(start.x,y,head.x,y,start.c)
+						start=head
+					elseif head.z==start.z then
+						-- end of self
+						rectfill(start.x,y,head.x,y,start.c)
+						-- find foremost 'background' span (if any)
+						local x,z,maxz,maxspan=head.x,start.z,-32000
+						local bck=spans.next
+						while bck do
+							if bck.z<z and
+								bck.z>maxz and
+								bck.x1 and 
+								bck.x1>x and
+								bck.x<x then
+									maxz,maxspan=bck.z,bck
+							end
+							bck=bck.next
+						end
+						start=maxspan
+						if(start) start.x=x
+					end
+				end
+				head=head.next
+			end
+		end
+		-- reset screen buffer
+		screen=setmetatable({},screen_cls)
+	end
 }
 end
 
