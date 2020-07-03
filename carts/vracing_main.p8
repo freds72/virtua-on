@@ -1729,7 +1729,7 @@ function polyfill(p,col)
 		if(y0>y1) x1=x0 y1=y0 x0=_x1 y0=_y1
 		-- exact slope
 		local dx=(x1-x0)/(y1-y0)
-		if(y0<-64) x0-=(y0+64)*dx y0=-64
+		if(y0<-64) x0-=(y0+64)*dx y0=-65
 		-- subpixel shifting (after clipping)
 		local cy0=y0\1+1
 		x0+=(cy0-y0)*dx

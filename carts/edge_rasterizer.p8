@@ -13,7 +13,7 @@ function _init()
 		--poly_rasterizer,
 		--trifill_rasterizer,
 		--hybrid_rasterizer,
-		-- convex_rasterizer,
+		convex_rasterizer,
 		poke_rasterizer
 		--convex_zbuf_rasterizer
 	}
@@ -529,7 +529,7 @@ function poke_rasterizer()
 		end
 	}
 	return {
-	name="poke2",
+	name="memset",
 	-- add edge
 	add=function(self,verts,c,z)
 		add(poly,{v=verts,c=c})
@@ -556,18 +556,12 @@ function poke_rasterizer()
 					if(x0>x1) x0,x1=x1,x0 
 					-- odd boundary?
 					local m=0x6000|y<<6
-					local m0,m1,c=m|x0\2,m|((x1-(x1&3))\2),c*0x1111
+					local m0,c=m|x0\2,c*0x11
 					if(x0&1==1) poke(m0,@m0&0xf|c<<4) m0+=1
-					-- shift to boundary
-					for i=m0,m1-1,2 do
-						poke2(i,c)
-					end
+					memset(m0,c,(x1-x0-1)\2)
 					-- remaining 0-4 pixels
-					-- adjust end
-					if m1-m0+1>0 then
-						local c0,mask=@@m1,0xf.ffff<<((x1&3)<<2)
-						poke2(m1,c0&~mask|c&mask)
-					end
+					if(x1&1==1) m|=((x1)\2) poke(m,@m&0xf|c<<4)
+					
 					--pset(x1,y,8)
 				else
 				 nodes[y]=x0
