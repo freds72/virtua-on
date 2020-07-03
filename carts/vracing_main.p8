@@ -972,7 +972,6 @@ function play_state(checkpoints,cam_checkpoints)
 	plyr=add(actors,make_plyr(track.start_pos,0,make_track(track.segments)))
 
 	-- init npc's
-	--[[
 	for i=0,6 do
 		local npc_track=make_track(track.segments,8*i)
 		local _,l,r=npc_track:get_next()
@@ -986,7 +985,6 @@ function play_state(checkpoints,cam_checkpoints)
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 		npc.spr=37+(i%4)
 	end
-	]]
 
 	-- reset cam	
 	cam=make_cam()
@@ -1475,7 +1473,7 @@ function _draw()
 	-- hud and game state display
 	draw_state()
 
-	print(stat(1),-62,32+2,0)
+	-- print(stat(1),-62,32+2,0)
 end
 
 -->8
