@@ -714,7 +714,7 @@ end
 local debug_vectors={}
 function draw_vector(f,p,c,v)
 	local x0,y0=cam:project(p)
-	local x1,y1=cam:project(v_add(p,f))
+	local x1,y1=cam:project(v_add(p,f,v or 8))
 	line(x0,y0,x1,y1,c)
 	if v then
 		print(v,x1+3,y1,c)
@@ -998,7 +998,7 @@ function make_car(p,angle,track,fix_pos)
 		v_scale(p,0.2)
 	end
 
-	local full_slide,rear_slide=false,false
+	local front_slide,rear_slide=false,false
 	local skidmark_emitters={
 		skidmarks:make_emitter(),
 		skidmarks:make_emitter(),
@@ -1043,8 +1043,8 @@ function make_car(p,angle,track,fix_pos)
 			angularv+=torque*0.5/30
 
 			-- apply some damping
-			angularv*=0.86
-			v_scale(velocity,lerp(0.97,0.8,min(sliding_t,30)/30))
+			angularv*=0.8
+			v_scale(velocity,0.97)
 			-- some friction
 			-- v_add(velocity,velocity,-0.02*v_dot(velocity,velocity))
 		end,
@@ -1087,11 +1087,11 @@ function make_car(p,angle,track,fix_pos)
 			forces,torque={0,0,0},0
 
 			-- skidmarks
-			if full_slide==true then
-				for i,a in pairs(v) do
-					skidmark_emitters[i](self:apply(a))
-				end	
-			elseif rear_slide==true then
+			if front_slide==true then
+				skidmark_emitters[1](self:apply(v[1]))
+				skidmark_emitters[2](self:apply(v[2]))			
+			end
+			if rear_slide==true then
 				skidmark_emitters[3](self:apply(v[3]))
 				skidmark_emitters[4](self:apply(v[4]))			
 			end
@@ -1099,38 +1099,38 @@ function make_car(p,angle,track,fix_pos)
 		get_speed=function(self)
 			return 300*3.6*(v_dot(velocity,velocity)^0.5)
 		end,
-		steer=function(self,steering_dt,rpm,brake)
-			is_braking=brake==true
-			steering_angle+=mid(steering_dt,-0.2,0.2)
+		steer=function(self,steering_dt,rpm,braking)
+			steering_angle+=steering_dt
+			steering_angle=mid(steering_angle,-0.2,0.2)
 
 			-- longitudinal slip ratio
 			local right=m_right(self.m)
 			local sr=v_dot(right,velocity)
 			-- slipping?
-			full_slide=abs(sr)>0.12
+			front_slide=abs(sr)>0.12 
 
 			-- max "grip"
-			sr=mid(sr,-0.10,0.10)
-			sr=1-abs(sr)/0.40
-			steering_angle*=sr
+			local sa=1-abs(mid(sr,-0.12,0.12))/0.48
+
+			add(debug_vectors,{f=right,p=self.pos,c=8,scale=sa})
+			add(debug_vectors,{f=velocity,p=self.pos,c=2})
+
+			velocity=v_add(velocity,right,-mid(sr,-0.003,0.003))
 
 			local fwd=m_fwd(self.m)
 			local effective_rps=30*v_dot(fwd,velocity)/0.2638
 			local rps=30*rpm*2
-			--[[
-			-- ???
 			if rps>10 then
-				rpm*=lerp(0.9,1,effective_rps/rps)
+				-- scale forward force according to grip ratio
+				rpm*=lerp(0.63,1,effective_rps/rps)
 			end
-			]]
-			
-			if is_braking then
+
+			if braking then
+				-- todo: take into account sr
 				v_scale(velocity,0.9)
-				--fwd=v_add(fwd,fwd,-0.9*v_dot(fwd,fwd))
 			end
-			v_scale(fwd,rpm*sr)		
-			
-			self:apply_force_and_torque(fwd,-steering_angle*lerp(0,1,rpm/max_rpm))
+			v_scale(fwd,rpm)			
+			self:apply_force_and_torque(fwd,-0.5*sa*steering_angle*min(1,rpm/max_rpm))
 
 			-- rear wheels sliding?
 			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6

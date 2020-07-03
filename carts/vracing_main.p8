@@ -554,21 +554,34 @@ function make_car(model_name,lod_id,p,angle,track)
 			if(rear_slide==true) do_skidmarks(self,rear_emitters)
 		end,
 		get_speed=function(self)
-			return 250*3.6*sqrt(v_dot(velocity,velocity))
+			return 250*3.6*v_len(velocity)
 		end,
-		steer=function(self,steering_dt,rpm,braking)
-			steering_angle+=steering_dt
-			steering_angle=mid(steering_angle,-0.2,0.2)
-
-			-- longitudinal slip ratio
-			local sr=v_dot(m_right(self.m),velocity)
+		steer=function(self,steering_dt,rpm,braking,npc)
+			if npc then
+				steering_angle=mid(steering_dt,-0.15,0.15)
+			else
+				steering_angle=mid(steering_angle+steering_dt,-0.15,0.15)
+			end
+			-- slip angle (front tire grip)			
 			-- slipping?
-			front_slide=abs(sr)>0.12 
+			local steer={cos(angle-steering_angle),0,sin(angle-steering_angle)}
+			local sa=v_dot(steer,velocity)
+			front_slide=abs(sa)>0.22
+			-- map to 0-1
+			sa=1-min(abs(sa),0.2)/0.8
 
-			-- max "grip"
-			sr=1-abs(mid(sr,-0.10,0.10))/0.40
+			local right,fwd=m_right(self.m),m_fwd(self.m)
+
+			-- slip ratio (overall car grip)
+
+			-- kill lateral velocity (less rally)			
+			local drag=v_dot(fwd,velocity)
+			drag=lerp(0.003,0.008,drag*drag/0.12)
+			local sr=mid(v_dot(right,velocity),-drag,drag)
+			if drag>0.001 then
+				velocity=v_add(velocity,right,-sr)
+			end
 			
-			local fwd=m_fwd(self.m)
 			local effective_rps=30*v_dot(fwd,velocity)/0.2638
 			local rps=30*rpm*2
 			if rps>10 then
@@ -578,13 +591,14 @@ function make_car(model_name,lod_id,p,angle,track)
 
 			if braking then
 				-- todo: take into account sr
-				v_scale(velocity,0.9)
+				-- npc are braking a bit harder
+				v_scale(velocity,npc and 0.92 or 0.95)
 			end
 			v_scale(fwd,rpm)			
-			self:apply_force_and_torque(fwd,-0.72*sr*steering_angle*min(1,rpm/max_rpm))
+			self:apply_force_and_torque(fwd,-0.72*sa*steering_angle)
 
 			-- rear wheels sliding?
-			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6		
+			rear_slide=not full_slide and rps>10 and effective_rps/rps<0.6
 
 			return min(rpm,max_rpm)
 		end,
@@ -690,7 +704,7 @@ function make_plyr(p,angle,track)
 			rpm=0
 		end
 
-		rpm=self:steer(da/8,rpm)
+		rpm=self:steer(da/32,rpm)
 	end
 	
 	body.update=function(self)
@@ -878,7 +892,7 @@ function make_npc(p,angle,track)
 		-- default: steer to track
 		local target_angle=pid(0,0.75-self:angle_to(tgt),1/30)
 
-		rpm=self:steer(target_angle,0.6*lerp(0.8,1,1-curve/1.5),abs(target_angle)>0.12)
+		rpm=self:steer(target_angle,0.7,abs(target_angle)>0.12,true)
 	end
 	body.update_parts=function(self,total_r,steering_angle)
 		local wheel_m=make_m_from_euler(total_r,0,0)
@@ -958,6 +972,7 @@ function play_state(checkpoints,cam_checkpoints)
 	plyr=add(actors,make_plyr(track.start_pos,0,make_track(track.segments)))
 
 	-- init npc's
+	--[[
 	for i=0,6 do
 		local npc_track=make_track(track.segments,8*i)
 		local _,l,r=npc_track:get_next()
@@ -971,6 +986,7 @@ function play_state(checkpoints,cam_checkpoints)
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 		npc.spr=37+(i%4)
 	end
+	]]
 
 	-- reset cam	
 	cam=make_cam()
@@ -1225,7 +1241,7 @@ function _init()
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=0
+		track_id=2
 	end
 	
 	-- load regular 3d models
@@ -1459,8 +1475,7 @@ function _draw()
 	-- hud and game state display
 	draw_state()
 
-	local y=-32
-	print(stat(1),-62,y+2,0)
+	print(stat(1),-62,32+2,0)
 end
 
 -->8
