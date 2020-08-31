@@ -8,4 +8,4 @@ config.txt
 sdl_controllers.txt
 *.bin
 *.md
-/carts/tracks_*.p8
+
