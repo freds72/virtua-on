@@ -204,3 +204,10 @@ for i in range(0,cart_id+1):
 version="v02"
 print("export index.html {} vracing_main_{}.p8 vracing_title.p8".format(export_cmd,version))
 print("export vracing_v02.bin {} vracing_main_{}.p8 vracing_title.p8".format(export_cmd,version))
+
+# carts=""
+# for i in range(13):
+#     carts += "vracing_{}.p8 ".format(i)
+# print("export vracing_v03.bin {} vracing_main.p8 vracing_title.p8".format(carts))
+
+# export vracing_v03.bin vracing_0.p8 vracing_1.p8 vracing_2.p8 vracing_3.p8 vracing_4.p8 vracing_5.p8 vracing_6.p8 vracing_7.p8 vracing_8.p8 vracing_9.p8 vracing_10.p8 vracing_11.p8 vracing_12.p8  vracing_main.p8 vracing_title.p8
