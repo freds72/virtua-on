@@ -625,8 +625,8 @@ function selection_state()
 			if(start_race_async) start_race_async=corun(start_race_async)
 
 			t+=1
-			if(btnp(0)) track-=1 sfx(63,3)
-			if(btnp(1)) track+=1 sfx(63,3)	
+			if(btnp(0)) track-=1
+			if(btnp(1)) track+=1
 			track=mid(track,0,#tracks-1)
 
 			local k=track

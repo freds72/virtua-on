@@ -10,7 +10,7 @@ local_dir = os.path.dirname(os.path.realpath(__file__))
 blender_dir = os.path.expandvars("%programfiles%/Blender Foundation/Blender")
 pico_dir = ""
 if socket.gethostname()=="FRWS3706":
-    pico_dir = os.path.join("C:",os.path.sep,"pico-8_win32")
+    pico_dir = os.path.join("C:",os.path.sep,"pico-8-0.2.0")
 else:
     pico_dir = os.path.join("D:",os.path.sep,"pico-8_0.1.12c")
 
@@ -201,9 +201,8 @@ if len(s)!=0:
 export_cmd=""
 for i in range(0,cart_id+1):
     export_cmd += "vracing_{}.p8 ".format(i)
-version="v02"
-print("export index.html {} vracing_main_{}.p8 vracing_title.p8".format(export_cmd,version))
-print("export vracing_v02.bin {} vracing_main_{}.p8 vracing_title.p8".format(export_cmd,version))
+print("export index.html {} vracing_main.p8 vracing_title.p8".format(export_cmd,version))
+print("export vracing.bin {} vracing_main.p8 vracing_title.p8".format(export_cmd,version))
 
 # carts=""
 # for i in range(13):
