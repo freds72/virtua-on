@@ -394,8 +394,7 @@ function push_state(state,...)
 end
 
 function title_state()
-	local angle=0
-	local t=0
+	local angle,t,loading=0,0
 	local cam_pos={5,1,0}
 	music(0)
 	
@@ -461,15 +460,15 @@ function title_state()
 			spr(231,2,120,2,1)
 			palt()
 
-			printb("tech demo #02",nil,20,8,2)
-
-	  		if(t%32<16) printb("❎🅾️ to start",nil,121,10,4)
+	  	if(t%32<16) printb("❎🅾️ to start",nil,121,10,4)
 
 		end,
 		-- update
 		update=function(self)
 			t+=1
-			if btnp(4) or btnp(5) then
+			if not loading and (btnp(4) or btnp(5)) then
+				-- avoid reentrancy bug
+				loading=true
 				music(-1,500)
 				push_state(slidein_state,selection_state)
 			end
@@ -547,8 +546,7 @@ function slideout_state()
 end
 
 function selection_state()
-	local t=0
-	local track=0
+	local track,t,loading=0,0
  	local track_tgt=0
 	local blink=true
 	local tracks={
@@ -636,7 +634,9 @@ function selection_state()
 				track_tgt=k
 			end
 
-			if btnp(4) or btnp(5) then
+			if not loading and (btnp(4) or btnp(5)) then
+				-- avoid reentrancy bug
+				loading=true
 				-- snap track
 				track_tgt=k
 				-- sub-state
