@@ -14,7 +14,9 @@ function _init()
 		--trifill_rasterizer,
 		--hybrid_rasterizer,
 		convex_rasterizer,
-		poke_rasterizer
+		foley_rasterizer
+		--poke_rasterizer,
+		--table_rasterizer
 		--convex_zbuf_rasterizer
 	}
  --raz=edge_rasterizer()
@@ -457,7 +459,7 @@ function hybrid_rasterizer()
 end
 
 -->8
--- hybrid rasterizer
+-- sub pix
 function convex_rasterizer()
 	local poly={}
 	
@@ -473,45 +475,107 @@ function convex_rasterizer()
 		end
 	}
 	return {
-	name="edge+sub-pix",
-	-- add edge
-	add=function(self,verts,c,z)
-		add(poly,{v=verts,c=c})
-	end,
- draw=function(self)
-	for k=1,#poly do
-		local p=poly[k]
-		local v=p.v
-  		color(p.c)
+		name="edge+sub-pix",
+		-- add edge
+		add=function(self,verts,c,z)
+			add(poly,{v=verts,c=c})
+		end,
+		draw=function(self)
+			for k=1,#poly do
+				local p=poly[k]
+				local v=p.v
+				color(p.c)
 
-		local v0,nodes=v[#v],{} -- setmetatable({},cache_cls)
-		local x0,y0=v0[1],v0[2]
-		for i=1,#v do
-			local v1=v[i]
-			local x1,y1=v1[1],v1[2]
-			local _x1,_y1=x1,y1
-			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-			local cy0,cy1,dx=y0\1+1,y1\1,(x1-x0)/(y1-y0)
-			if(y0<0) x0-=y0*dx y0=0
-   		x0+=(-y0+cy0)*dx
-			for y=cy0,min(cy1,127) do
-				local x=nodes[y]
-				if x then
-				 rectfill(x,y,x0,y)
-				else
-				 nodes[y]=x0
+				local nv,spans=#v,{} -- setmetatable({},cache_cls)
+				for i,p1 in pairs(v) do
+					local p0=v[i%nv+1]
+					local x0,y0,x1,y1=p0[1],p0[2],p1[1],p1[2]
+					if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+					local dx=(x1-x0)/(y1-y0)
+					local cy0=y0\1+1
+					if(y0<0) x0-=y0*dx y0=0 cy0=0
+					-- sub-pix shift
+					x0+=(cy0-y0)*dx
+					if(y1>127) y1=127
+					for y=cy0,y1 do
+						if spans[y] then
+							rectfill(x0,y,spans[y],y)
+						else
+							spans[y]=x0
+						end
+						x0+=dx
+					end
 				end
-				x0+=dx					
-			end			
-			--break
-			x0,y0=_x1,_y1
+			end
+			poly={}
 		end
-  	end
-  	poly={}
-end
 }
 end
 
+-->8
+-- foley & van hame
+function foley_rasterizer()
+	local poly={}
+	
+	return {
+		name="foley",
+		-- add edge
+		add=function(self,verts,c,z)
+			add(poly,{v=verts,c=c})
+		end,
+		draw=function(self)
+			for k=1,#poly do
+				local p=poly[k]
+				color(p.c)
+				p=p.v
+
+				--find top & bottom of poly
+				local miny,maxy,mini=32000,-32000,-1
+				for i,v in pairs(p) do
+					local y=v[2]
+					if (y<miny) mini,miny=i,y
+					if (y>maxy) maxy=y
+				end
+				
+				--data for left & right edges:
+				local np,li,lj,ri,rj,ly,ry,lx,ldx,rx,rdx=#p,mini,mini,mini,mini,miny-1,miny-1
+
+				--step through scanlines.
+				for y=max(0,ceil(miny)),min(ceil(maxy)-1,127) do
+					--maybe update to next vert
+					while ly<y do
+						li=lj
+						lj+=1
+						if (lj>np) lj=1
+						local v0,v1=p[li],p[lj]
+						local y0,y1=v0[2],v1[2]
+						ly=ceil(y1)-1
+						lx=v0[1]
+						ldx=(v1[1]-lx)/(y1-y0)
+						--sub-pixel correction
+						lx+=(y-y0)*ldx
+					end   
+					while ry<y do
+						ri=rj
+						rj-=1
+						if (rj<1) rj=np
+						local v0,v1=p[ri],p[rj]
+						local y0,y1=v0[2],v1[2]
+						ry=ceil(y1)-1
+						rx=v0[1]
+						rdx=(v1[1]-rx)/(y1-y0)
+						--sub-pixel correction
+						rx+=(y-y0)*rdx
+					end
+					rectfill(lx,y,rx,y)
+					lx+=ldx
+					rx+=rdx
+				end
+			end
+			poly={}
+		end
+}
+end
 -->8
 -- poke-based2 rasterizer
 function poke_rasterizer()
@@ -537,34 +601,46 @@ function poke_rasterizer()
  draw=function(self)
 	for k=1,#poly do
 		local p=poly[k]
-		local v,c=p.v,p.c
+		local v,c0,c1=p.v,p.c,p.c<<4
+		local c=c0|c1
 
-		local v0,nodes=v[#v],{} -- setmetatable({},cache_cls)
-		local x0,y0=v0[1],v0[2]
-		for i=1,#v do
-			local v1=v[i]
-			local x1,y1=v1[1],v1[2]
-			local _x1,_y1=x1,y1
+		local nv,spans=#v,{}
+		for i,p1 in pairs(v) do
+			local p0=v[i%nv+1]
+			local x0,y0,x1,y1=p0[1],p0[2],p1[1],p1[2]
 			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-			local cy0,cy1,dx=y0\1+1,y1\1,(x1-x0)/(y1-y0)
-			if(y0<0) x0-=y0*dx y0=0
-   		x0+=(-y0+cy0)*dx
-			for y=cy0,min(cy1,127) do
-				local x=nodes[y]
+			local dx=(x1-x0)/(y1-y0)
+			local cy0=y0\1+1
+			if(y0<0) x0-=y0*dx y0=0 cy0=0
+			-- sub-pix shift
+			x0+=(cy0-y0)*dx
+			if(y1>127) y1=127
+			for y=cy0,y1 do
+				local x=spans[y]
 				if x then
-					local x0,x1=x\1,x0\1
-					if(x0>x1) x0,x1=x1,x0 
-					-- odd boundary?
-					local m=0x6000|y<<6
-					local m0,c=m|x0\2,c*0x11
-					if(x0&1==1) poke(m0,@m0&0xf|c<<4) m0+=1
-					memset(m0,c,(x1-x0-1)\2)
-					-- remaining 0-4 pixels
-					if(x1&1==1) m|=((x1)\2) poke(m,@m&0xf|c<<4)
+          local xmax,xmin=x0,x
+          if(xmin>xmax) xmin,xmax=xmax,xmin
+          -- within bounds?
+          if xmin <= 127 and xmax >= 0 then
+						if (xmin<0) xmin = 0
+						if (xmax>127) xmax = 127
+						local off=xmin\2
+						local p,w=0x6000|y<<6|off,(xmax\2)-off+1
+						if (xmin & 1)!=0 then
+							w-=1
+							poke(p,@p & 0x0f | c1)
+							p+=1
+						end
+						if (xmax & 1)==0 then
+							w-=1
+							poke(p+w,@(p+w) & 0xf0 | c0)
+						end
 					
+						memset(p,c,w)  
+          end				
 					--pset(x1,y,8)
 				else
-				 nodes[y]=x0
+				 spans[y]=x0
 				end
 				x0+=dx					
 			end			
@@ -576,6 +652,117 @@ function poke_rasterizer()
 end
 }
 end
+
+-->8
+-- table based rasterizer
+function array(s1,s2)
+  local a={}
+  for i=0,s1-1 do
+    -- nested array?
+    a[i]=s2 and array(s2) or 0
+  end
+  return a    
+end
+
+function table_rasterizer()
+	local poly={}
+	local _curpageptr1={}
+	for i=0,128-1 do
+		_curpageptr1[i]=i*64
+	end
+
+  local function drawlinen(xmin,y,xmax,colb)
+		local off=xmin\2
+    local p,w=_curpageptr1[y]|off,(xmax\2)-off+1
+    if (xmin & 1)!=0 then
+      w-=1
+      poke(p,@p & 0x0f | colb & 0xf0)
+      p+=1
+    end
+    if (xmax & 1)==0 then
+      w-=1
+    end
+  
+		memset(p,colb,w)         
+		p+=w
+
+    if (xmax & 1)==0 then
+      --assert(_curpageptr1[p],"invalid dst: \01 y:\04 \02->\03", p,xmin,xmax,y)
+      poke(p,@p & 0xf0 | colb & 0x0f)
+    end  
+  end
+
+	return {
+	name="table",
+	-- add edge
+	add=function(self,verts,c,z)
+		add(poly,{v=verts,c=c})
+	end,
+  draw=function(self)
+		--for i,v in pairs(_curpageptr1) do      
+		--	_curpageptr1[i]=0
+		--end
+		memset(0x0,0,128*64)
+		for k=1,#poly do
+			local p=poly[k]
+			local polygon,c=p.v,p.c
+
+			local colb = ((c & 0xf) << 4) | (c & 0xf)    
+			-- blend mode
+			local drawfct=drawlinen
+
+			local p0,spans=polygon[#polygon],{}
+			local x0,y0=p0[1],p0[2]
+			for i=1,#polygon do
+				local p1=polygon[i]
+				local x1,y1=p1[1],p1[2]
+				-- backup before any swap
+				local _x1,_y1=x1,y1
+				if(y0>y1) x1=x0 y1=y0 x0=_x1 y0=_y1
+				-- exact slope
+				local dx=(x1-x0)/(y1-y0)
+				-- subpixel shifting (after clipping)
+				local cy0=y0\1+1
+				if(y0<0) x0-=y0*dx y0=0 cy0=0
+				x0+=(cy0-y0)*dx
+				for y=cy0,min(y1\1,127) do
+					local x=spans[y]
+					if x then
+						-- rectfill(x,y+24,x0,y+24)
+						local xmax,xmin=x0,x
+						if(xmin>xmax) xmin,xmax=xmax,xmin
+						-- within bounds?
+						if xmin <= 127 and xmax >= 0 then
+							if (xmin < 0) xmin = 0
+							if (xmax > 127) xmax = 127
+							drawfct(xmin,y,xmax,colb)
+						end
+					else
+						spans[y]=x0
+					end
+					x0+=dx
+				end
+				-- next vertex
+				x0=_x1
+				y0=_y1
+			end    
+		end
+		poly={}
+		--for i=0,128*64-1 do
+    --	local v=(@i&0x0f)<<4|(@i&0xf0)>>4
+    --  poke(0x6000+i,v)
+    --end
+		for _,v in pairs(_curpageptr1) do
+			memcpy(0x6000|v,v,64)
+		end
+
+		--for i,v in pairs(_curpageptr1) do        
+		--	poke(0x6000+i,(v&0x0f)<<4|(v&0xf0)>>4)
+		--end
+	end
+}
+end
+
 
 function sort(_data)  
 	local _len,buffer1,buffer2,idx=#_data,_data,{},{}
