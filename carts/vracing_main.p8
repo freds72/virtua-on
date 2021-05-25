@@ -233,7 +233,8 @@ function sort(data)
 	 
 	 data[parent] = value
 	end
-   end
+end
+
 -->8
 -- main engine
 -- global vars
@@ -301,7 +302,7 @@ function make_cam()
 
 	-- screen shake
 	local shkx,shky=0,0
-	camera(-64,-64)
+	camera()
 	
 	return {
 		pos={0,0,0},
@@ -345,7 +346,7 @@ function make_cam()
 			if abs(shkx)<0.5 and abs(shky)<0.5 then
 				shkx,shky=0,0
 			end
-			camera(shkx-64,shky-64)
+			camera(shkx,shky)
 		end,
 		track=function(self,pos,a,u)
    			-- lerp angle
@@ -716,11 +717,11 @@ function make_plyr(p,angle,track)
 		-- sfx 0
 		local addr=0x3200+68*0
 		-- adjust pitch
-		poke(addr,bor(peek(addr)&0xc0,rpmvol))
+		poke(addr,bor(@addr&0xc0,rpmvol))
 		-- base engine
 		rpmvol=max(8,rpmvol-2)
 		addr+=2
-		poke(addr,bor(peek(addr)&0xc0,rpmvol))
+		poke(addr,bor(@addr&0xc0,rpmvol))
 		-- ensure engine sound is playing
 		local fix_engine=true
 		for i=16,19 do
@@ -931,7 +932,7 @@ function find_face(p,oldf)
 	end
 	-- voxel?
 	local x,z=((p[1]>>3)+16)\1,((p[3]>>3)+16)\1
-	local faces=track.ground[x+shl(z,5)]
+	local faces=track.ground[x|z<<5]
 	if faces then
 		for _,f in pairs(faces) do
 			if f!=oldf then
@@ -972,6 +973,7 @@ function play_state(checkpoints,cam_checkpoints)
 	plyr=add(actors,make_plyr(track.start_pos,0,make_track(track.segments)))
 
 	-- init npc's
+
 	for i=0,6 do
 		local npc_track=make_track(track.segments,8*i)
 		local _,l,r=npc_track:get_next()
@@ -985,7 +987,7 @@ function play_state(checkpoints,cam_checkpoints)
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 		npc.spr=37+(i%4)
 	end
-
+	
 	-- reset cam	
 	cam=make_cam()
 	
@@ -1004,7 +1006,7 @@ function play_state(checkpoints,cam_checkpoints)
 
 	local function track_project(v,pos,cc,ss)
 		local x,y=v[1]-pos[1],v[3]-pos[3]
-		return 44+0.3*(cc*x-ss*y),-0.3*(ss*x+cc*y)
+		return 96+0.3*(cc*x-ss*y),64-0.3*(ss*x+cc*y)
 	end
 	
 	local cam_checkpoint,cam_pov=0
@@ -1013,13 +1015,12 @@ function play_state(checkpoints,cam_checkpoints)
 	return
 		-- draw
 		function()
-			printb("lap time",31,-62,7,0)
-			printb("time",nil,-62,7,0)
-			printf(tostr(ceil(remaining_t/30)),nil,-55,xlfont)
+			printb("time",nil,2,7,0)
+			printf(tostr(ceil(remaining_t/30)),nil,9,xlfont)
 			
 			-- speed
-			printf(tostr(plyr:get_speed()\1),-33,50,xlfont)
-			printr("km/h",-32,57,10,9)
+			printf(tostr(plyr:get_speed()\1),31,114,xlfont)
+			printr("km/h",32,121,10,9)
 
 			-- 1/2/3...
 			if start_ttl>0 then
@@ -1028,21 +1029,24 @@ function play_state(checkpoints,cam_checkpoints)
 			end
 
 			-- blink go!
-			if(go_ttl>0 and go_ttl<30 and go_ttl%4<2) printxl(0,48,36,16,-14)
+			if(go_ttl>0 and go_ttl<30 and go_ttl%4<2) printxl(0,48+64,36+64,16,-14)
 
 			-- extend time message
-			if(extend_time_t>0 and extend_time_t%30<15) printr("extend time",nil,-36,10,4)
+			if(extend_time_t>0 and extend_time_t%30<15) printr("extend time",nil,28,10,4)
 			
 			-- previous times
-			local y=-55
+			_map_display(1)
+			printb("lap time",95,2,7,0)
+			local y=9
 			for i=1,#laps do
-				printb(i,23,y,9,0)
-				printb(laps[i],31,y,best_i==i and 9 or 7,0)
+				printb(i,87,y,9,0)
+				printb(laps[i],95,y,best_i==i and 9 or 7,0)
 				y+=7
 			end
-			printb(#laps+1,23,y,9,0)
-			printb(time_tostr(lap_t),31,y,7,0)
-			
+			printb(#laps+1,87,y,9,0)
+			printb(time_tostr(lap_t),95,y,7,0)
+			_map_display(0)
+
 			-- ranking
 			local rank,plyr_u=#npcs+1,plyr.track:get_u()
 			for _,npc in pairs(npcs) do
@@ -1056,11 +1060,12 @@ function play_state(checkpoints,cam_checkpoints)
 			end
 			-- last rank
 			prev_rank=rank
-			printb("rank",-62,-62,7,0)
-			local x0=printf(tostr(rank),-52,-55,xlfont)
-			printr(ranks[rank] or "th",x0,-53,10,9)
+			printb("rank",2,2,7,0)
+			local x0=printf(tostr(rank),12,9,xlfont)
+			printr(ranks[rank] or "th",x0,11,10,9)
 
 			-- track map
+			_map_display(1)
 			local pos,angle=plyr:get_pos()
 			local cc,ss,track_outline=cos(angle),-sin(angle),track.segments
 			-- draw npc path
@@ -1076,12 +1081,13 @@ function play_state(checkpoints,cam_checkpoints)
 			-- draw other cars
 			for i,npc in pairs(npcs) do
 				local x0,y0=track_project(npc.pos,pos,cc,ss)
-				spr(npc.spr,x0-2,y0-2)
+				spr(npc.spr,x0-2+64,y0-2+64)
 			end
 			-- player
 			-- circfill(44,0,1,0x88)
-			spr(53,40,-4)
+			spr(53,92,60)
 			palt()
+			_map_display(0)
 		end,
 		-- update
 		function()
@@ -1225,6 +1231,9 @@ function _init()
 	-- set draw distance menu
 	low_draw_dist()
 
+	-- screen extended mode
+	poke(0x5f36,1)
+
 	-- integrated fillp/color
 	poke(0x5f34,1)
 
@@ -1239,7 +1248,7 @@ function _init()
 		-- starting without context
 		cls(1)
 		-- bigforest
-		track_id=2
+		track_id=0
 	end
 	
 	-- load regular 3d models
@@ -1289,15 +1298,15 @@ local v_cache_cls={
 	
 		local outcode=k_near
 		if(az>z_near) outcode=k_far
-		if(ax>az) outcode+=k_right
-		if(-ax>az) outcode+=k_left
+		if(0.5*ax>az) outcode+=k_right
+		if(-0.5*ax>az) outcode+=k_left
 
 		-- not faster :/
 		-- local bo=-(((az-z_near)>>31)<<17)-(((az-ax)>>31)<<18)-(((az+ax)>>31)<<19)
 		-- assert(bo==outcode,"outcode:"..outcode.." bits:"..bo)
 
 		-- assume vertex is visible, compute 2d coords
-		local a={ax,ay,az,outcode=outcode,clipcode=outcode&2,x=(ax/az)<<6,y=-(ay/az)<<6} 
+		local a={ax,ay,az,outcode=outcode,clipcode=outcode&2,x=128+((ax/az)<<6),y=64-((ay/az)<<6)} 
 		t[v]=a
 		return a
 	end
@@ -1426,14 +1435,16 @@ function _draw()
 	sessionid+=1
 
 	-- background
-	rectfill(-64,-64,64,63,track.sky_color)
-	rectfill(-64,0,63,63,track.ground_color)
-	local x0=-shl(cam.angle,7)%128
- 	map(track.map,0,x0-64,-64,16,16)
- 	if x0>0 then
-	 	map(track.map,0,x0-192,-64,16,16)
- 	end
-
+	for s=1,0,-1 do
+		_map_display(s)
+		rectfill(0,0,127,63,track.sky_color)
+		rectfill(0,64,127,127,track.ground_color)
+		local x0=-(cam.angle<<7)&127
+		map(track.map,0,x0,0,16,16)
+		if x0>0 then
+			map(track.map,0,x0-128,0,16,16)
+		end
+	end
 	-- track
 	local v_cache=setmetatable({m=cam.m},v_cache_cls)
 
@@ -1449,7 +1460,7 @@ function _draw()
 	sort(out)
 
 	draw_faces(out,v_cache)
-	
+
 	-- clear vertex 
 	out={}
 
@@ -1473,7 +1484,8 @@ function _draw()
 	-- hud and game state display
 	draw_state()
 
-	-- print(stat(1),-62,32+2,0)
+	print(stat(1),-62,-40,0)
+
 end
 
 -->8
@@ -1742,14 +1754,20 @@ function polyfill(p,col)
 		if(y0>y1) x1=x0 y1=y0 x0=_x1 y0=_y1
 		-- exact slope
 		local dx=(x1-x0)/(y1-y0)
-		if(y0<-64) x0-=(y0+64)*dx y0=-65
+		if(y0<0) x0-=y0*dx y0=0
 		-- subpixel shifting (after clipping)
 		local cy0=y0\1+1
 		x0+=(cy0-y0)*dx
-		for y=cy0,min(y1\1,63) do
+		for y=cy0,min(y1,127) do
 			local x=nodes[y]
 			if x then
+				local x0=x0
 				rectfill(x,y,x0,y)
+				if (x0|x)&0xff7f!=0 then
+					_map_display(1)
+					rectfill(x-127,y,x0-127,y)
+					_map_display(0)
+				end
 			else
 				nodes[y]=x0
 			end
@@ -1772,15 +1790,15 @@ function z_poly_clip(znear,v)
 		if d1>0 then
 			if d0<=0 then
 				local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-				nv.x=(nv[1]/nv[3])<<6
-				nv.y=-(nv[2]/nv[3])<<6 
+				nv.x=128+((nv[1]/nv[3])<<6)
+				nv.y=64-((nv[2]/nv[3])<<6)
 				res[#res+1]=nv
 			end
 			res[#res+1]=v1
 		elseif d0>0 then
 			local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-			nv.x=(nv[1]/nv[3])<<6
-			nv.y=-(nv[2]/nv[3])<<6 
+			nv.x=128+((nv[1]/nv[3])<<6)
+			nv.y=64-((nv[2]/nv[3])<<6)
 			res[#res+1]=nv
 		end
 		v0=v1
@@ -1803,45 +1821,59 @@ function time_tostr(t)
 end
 
 function printb(s,x,y,c1,c2)
-	x=x or -(#s<<1)
-	?s,x,y+1,c2 or 1
-	?s,x,y,c1
+	if x then
+		?s,x,y+1,c2 or 1
+		?s,x,y,c1
+	else
+		printb(s,128-(#s<<1),y,c1,c2)
+		_map_display(1)
+		printb(s,-(#s<<1),y,c1,c2)
+		_map_display(0)
+	end
 end
 
 -- raised print
 function printr(s,x,y,c,c2)
-	x=x or -(#s<<1)
-	local sy=c2 and -2 or -1
-	for i=-1,1 do
-        for j=sy,1 do
-            print(s,x+i,y+j,0)
-        end
-    end
-	if(c2) print(s,x,y,c2) y-=1
-    print(s,x,y,c)
+	if x then
+		local sy=c2 and -2 or -1
+		for i=-1,1 do
+			for j=sy,1 do
+				print(s,x+i,y+j,0)
+			end
+		end
+		if(c2) print(s,x,y,c2) y-=1
+		print(s,x,y,c)
+	else
+		printr(s,128-(#s<<1),y,c,c2)
+		_map_display(1)
+		printr(s,-(#s<<1),y,c,c2)
+		_map_display(0)
+	end
 end
-
 
 -- print string s from bitmap font
 function printf(s,x,y,font)
-	palt(14,true)
-	palt(0,false)
 	local w=font.width
 	if x then
+		palt(14,true)
+		palt(0,false)
 		-- left aligned
 		x-=#s*w
+		for i=1,#s do
+			local sx=font[sub(s,i,i)]*w
+			sspr(sx,64,w,13,x,y)		
+			x+=w
+		end
+		
+		palt()
+		return x
 	else
-		-- centered
-		x=-shr(#s*w,1)
+		printf(s,128+(#s*w>>1),y,font)	
+		_map_display(1)
+		printf(s,#s*w>>1,y,font)	
+		_map_display(0)
+		return #s*w 
 	end
-	for i=1,#s do
-		local sx=font[sub(s,i,i)]*w
-		sspr(sx,64,w,13,x,y)		
-		x+=w
-	end
-	
-	palt()
-	return x
 end
 
 -- big font
