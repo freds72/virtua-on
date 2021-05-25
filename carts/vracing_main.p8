@@ -16,7 +16,7 @@ function make_v(a,b)
 		b[3]-a[3]}
 end
 function v_clone(v)
-	return pack(unpack(v))
+	return {v[1],v[2],v[3]}
 end
 function v_dot(a,b)
 	return a[1]*b[1]+a[2]*b[2]+a[3]*b[3]
@@ -41,13 +41,13 @@ function v_len(v)
 	x/=d
 	y/=d
 	z/=d
-	return d*sqrt(x*x+y*y+z*z)
+	return d*(x*x+y*y+z*z)^0.5
 end
 function v_normz(v)
 	local x,y,z=v[1],v[2],v[3]
 	local d=x*x+y*y+z*z
 	if d>0.001 then
-		d=sqrt(d)
+		d=d^0.5
 		return {x/d,y/d,z/d}
 	end
 	return v
@@ -109,18 +109,18 @@ function m_x_v(m,v)
 end
 -- optimized 4x4 matrix mulitply
 function m_x_m(a,b)
-	local a11,a21,a31,_,a12,a22,a32,_,a13,a23,a33,_,a14,a24,a34=unpack(a)
-	local b11,b21,b31,_,b12,b22,b32,_,b13,b23,b33,_,b14,b24,b34=unpack(b)
+	local a11,a21,a31,a12,a22,a32,a13,a23,a33=a[1],a[2],a[3],a[5],a[6],a[7],a[9],a[10],a[11]
+	local b11,b21,b31,b12,b22,b32,b13,b23,b33,b14,b24,b34=b[1],b[2],b[3],b[5],b[6],b[7],b[9],b[10],b[11],b[13],b[14],b[15]
 
 	return {
 			a11*b11+a12*b21+a13*b31,a21*b11+a22*b21+a23*b31,a31*b11+a32*b21+a33*b31,0,
 			a11*b12+a12*b22+a13*b32,a21*b12+a22*b22+a23*b32,a31*b12+a32*b22+a33*b32,0,
 			a11*b13+a12*b23+a13*b33,a21*b13+a22*b23+a23*b33,a31*b13+a32*b23+a33*b33,0,
-			a11*b14+a12*b24+a13*b34+a14,a21*b14+a22*b24+a23*b34+a24,a31*b14+a32*b24+a33*b34+a34,1
+			a11*b14+a12*b24+a13*b34+a[13],a21*b14+a22*b24+a23*b34+a[14],a31*b14+a32*b24+a33*b34+a[15],1
 		}
 end
 function m_clone(m)
-	return pack(unpack(m))
+	return {unpack(m)}
 end
 
 function make_m_from_euler(x,y,z)
@@ -933,7 +933,7 @@ function find_face(p,oldf)
 	end
 	-- voxel?
 	local x,z=((p[1]>>3)+16)\1,((p[3]>>3)+16)\1
-	local faces=track.ground[x+shl(z,5)]
+	local faces=track.ground[x|z<<5]
 	if faces then
 		for _,f in pairs(faces) do
 			if f!=oldf then
@@ -1216,7 +1216,7 @@ function gameover_state(win,total_t,rank)
 end
 
 function high_draw_dist()
-	dfar=2	
+	dfar=2
 	menuitem(2, "draw dist: high",low_draw_dist)
 end
 function low_draw_dist()
@@ -1452,9 +1452,9 @@ function _draw()
 	end
 
 	sort(out)
-
-	draw_faces(out,v_cache)
 	
+	draw_faces(out,v_cache)
+
 	-- clear vertex 
 	out={}
 
@@ -1478,8 +1478,6 @@ function _draw()
 
 	-- hud and game state display
 	draw_state()
-
-	-- print(stat(1),-62,32+2,0)
 end
 
 -->8
@@ -1734,36 +1732,50 @@ function unpack_track(track_id)
 end
 
 -->8
--- edge rasterizer
-function polyfill(p,col)
-	color(col)
-	local p0,nodes=p[#p],{}
-	local x0,y0=p0.x,p0.y
 
-	for i=1,#p do
-		local p1=p[i]
-		local x1,y1=p1.x,p1.y
-		-- backup before any swap
-		local _x1,_y1=x1,y1
-		if(y0>y1) x1=x0 y1=y0 x0=_x1 y0=_y1
-		-- exact slope
-		local dx=(x1-x0)/(y1-y0)
-		if(y0<-64) x0-=(y0+64)*dx y0=-65
-		-- subpixel shifting (after clipping)
-		local cy0=y0\1+1
-		x0+=(cy0-y0)*dx
-		for y=cy0,min(y1\1,63) do
-			local x=nodes[y]
-			if x then
-				rectfill(x,y,x0,y)
-			else
-				nodes[y]=x0
-			end
-			x0+=dx
+
+-- foley rasterizer
+function polyfill(p,col)
+	--find top & bottom of poly
+	local np,miny,maxy,mini=#p,32000,-32000
+	for i=1,np do
+		local y=p[i].y
+		if (y<miny) mini,miny=i,y
+		if (y>maxy) maxy=y
+	end
+	if(not mini) return
+	color(col)
+	--data for left & right edges:
+	local li,lj,ri,rj,ly,ry,lx,ldx,rx,rdx=mini,mini,mini,mini,miny-1,miny-1
+
+	--step through scanlines.
+	for y=max(-64,ceil(miny)),min(ceil(maxy)-1,63) do
+		--maybe update to next vert
+		while ly<y do
+			li,lj=lj,lj+1
+			if (lj>np) lj=1
+			local v0,v1=p[li],p[lj]
+			local y0,y1=v0.y,v1.y
+			ly=ceil(y1)-1
+			lx=v0.x
+			ldx=(v1.x-lx)/(y1-y0)
+			--sub-pixel correction
+			lx+=(y-y0)*ldx
+		end   
+		while ry<y do
+			ri,rj=rj,rj-1
+			if (rj<1) rj=np
+			local v0,v1=p[ri],p[rj]
+			local y0,y1=v0.y,v1.y
+			ry=ceil(y1)-1
+			rx=v0.x
+			rdx=(v1.x-rx)/(y1-y0)
+			--sub-pixel correction
+			rx+=(y-y0)*rdx
 		end
-		-- next vertex
-		x0=_x1
-		y0=_y1
+		rectfill(lx,y,rx,y)
+		lx+=ldx
+		rx+=rdx
 	end
 end
 
@@ -1778,15 +1790,15 @@ function z_poly_clip(znear,v)
 		if d1>0 then
 			if d0<=0 then
 				local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-				nv.x=(nv[1]/nv[3])<<6
-				nv.y=-(nv[2]/nv[3])<<6 
+				nv.x=(nv[1]/znear)<<6
+				nv.y=-(nv[2]/znear)<<6 
 				res[#res+1]=nv
 			end
 			res[#res+1]=v1
 		elseif d0>0 then
 			local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-			nv.x=(nv[1]/nv[3])<<6
-			nv.y=-(nv[2]/nv[3])<<6 
+			nv.x=(nv[1]/znear)<<6
+			nv.y=-(nv[2]/znear)<<6 
 			res[#res+1]=nv
 		end
 		v0=v1

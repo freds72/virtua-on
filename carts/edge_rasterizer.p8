@@ -1,5 +1,5 @@
 pico-8 cartridge // http://www.pico-8.com
-version 18
+version 32
 __lua__
 -- main engine
 local raz
@@ -8,14 +8,15 @@ local mode=0
 local razz
 
 function _init()
+
  razz={
 		--edge_rasterizer,
 		--poly_rasterizer,
 		--trifill_rasterizer,
 		--hybrid_rasterizer,
-		--convex_rasterizer,
-		--foley_rasterizer,
-		poke_rasterizer,
+		convex_rasterizer,
+		foley_rasterizer
+		--poke_rasterizer,
 		--table_rasterizer
 		--convex_zbuf_rasterizer
 	}
@@ -59,6 +60,15 @@ function _update()
 		raz:add({{x0,y0},{x1,y1},{x2,y2},{x3,y3}},i%15+1,i)
 	end
 	
+	--local p={}
+	--for i=0,9 do
+	--	local x,y=16*(i%3),16*(i\3)
+	--	p[i]=pack(rotate(x+32,y+32))
+	--end
+	--raz:add({p[0],p[1],p[4],p[3]},1,1)
+	--raz:add({p[1],p[2],p[5],p[4]},2,1)
+	--raz:add({p[3],p[4],p[7],p[6]},3,1)
+	--raz:add({p[4],p[5],p[8],p[7]},4,1)
 end
 
 function _draw()
@@ -69,7 +79,6 @@ function _draw()
  print(raz.name..": "..cpu.."%",2,1,7)
 end
 
--->8
 -->8
 -- #putaflipinit
 function cflip() if(slowflip)flip()
@@ -125,7 +134,7 @@ odraw=_draw
 function _draw()
 if(slowflip)extcmd("rec")
 odraw()
-if(slowflip)for i=0,99 do flip() end extcmd("video")cls()stop("gif saved")
+if(slowflip)for i=0,99 do flip() end --extcmd("video")cls()stop("gif saved")
 end
 menuitem(1,"put a flip in it!",function() slowflip=not slowflip end)
 
@@ -483,27 +492,52 @@ function convex_rasterizer()
 		draw=function(self)
 			for k=1,#poly do
 				local p=poly[k]
-				local v=p.v
-				color(p.c)
+				local v,c=p.v,p.c
+				color(c)
 
 				local nv,spans=#v,{} -- setmetatable({},cache_cls)
 				for i,p1 in pairs(v) do
 					local p0=v[i%nv+1]
 					local x0,y0,x1,y1=p0[1],p0[2],p1[1],p1[2]
 					if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-					local dx=(x1-x0)/(y1-y0)
-					local cy0=y0\1+1
+					local cy0,dx=y0\1+1,(x1-x0)/(y1-y0)
 					if(y0<0) x0-=y0*dx y0=0 cy0=0
 					-- sub-pix shift
 					x0+=(cy0-y0)*dx
 					if(y1>127) y1=127
 					for y=cy0,y1 do
-						if spans[y] then
-							rectfill(x0,y,spans[y],y)
+						local span=spans[y]
+						if span then
+							local x0=x0\1
+							span\=1
+							if(x0>span) x0,span=span,x0
+							if span-x0>=1 then
+								rectfill(x0,y,span-1,y,c)
+							end
+							--rectfill(x0,y,span,y,c)
 						else
 							spans[y]=x0
 						end
 						x0+=dx
+					end
+				end
+
+				if true then		
+					color(0)
+					for i,p1 in pairs(v) do
+						local p0=v[i%nv+1]
+						local x0,y0,x1,y1=p0[1]-0.5,p0[2],p1[1]-0.5,p1[2]
+						-- y major
+						if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+						local cy0,cy1,dx=y0\1+1,y1\1+1,(x1-x0)/(y1-y0)
+						c=0
+						if y1-cy0>1 then
+							--rectfill(x0-0.5,y0,x0+(cy0-y0)*dx,y0,8) 
+							x0+=(cy0-y0)*dx 
+							x1+=(cy1-y1)*dx
+							c=8
+						end
+						line(x0,cy0,x1,cy1,c)						
 					end
 				end
 			end
@@ -526,10 +560,10 @@ function foley_rasterizer()
 		draw=function(self)
 			for k=1,#poly do
 				local p=poly[k]
-				color(p.c)
+				local c=p.c
+				color(c)
 				p=p.v
 
-				shift=shift or 0
 				local miny,maxy,minx,maxx,mini,minix=32000,-32000,32000,-32000
 				-- find extent
 				for i,v in pairs(p) do
@@ -543,30 +577,182 @@ function foley_rasterizer()
 				-- find smallest iteration area
 				if abs(minx-maxx)<abs(miny-maxy) then
 					--data for left and right edges:
-					local np,li,lj,ri,rj,lx,rx,ly,ldy,ry,rdy=#p,minix,minix,minix,minix,minx-1,minx-1
+					local np,lj,rj,lx,rx,ly,ldy,ry,rdy=#p,minix,minix,minx-1,minx-1				
+					--step through scanlines.
+					local prev_ly,prev_ry
+					for x=max(0,minx\1+1),min(127,maxx) do
+						--maybe update to next vert
+						while lx<x do
+							local v0=p[lj]
+							lj+=1
+							if (lj>np) lj=1
+							local v1=p[lj]
+							local x0,x1=v0[1],v1[1]
+							lx=x1&-1
+							ly=v0[2]
+							prev_ly=ly
+							ldy=(v1[2]-ly)/(x1-x0)
+							--sub-pixel correction
+							ly+=(x-x0)*ldy							
+						end   
+						while rx<x do
+							local v0=p[rj]
+							rj-=1
+							if (rj<1) rj=np
+							local v1=p[rj]
+							local x0,x1=v0[1],v1[1]
+							rx=x1&-1
+							ry=v0[2]
+							prev_ry=ry
+							rdy=(v1[2]-ry)/(x1-x0)
+							--sub-pixel correction
+							ry+=(x-x0)*rdy
+						end
+						rectfill(x,ly,x,ry)
+						--if(prev_ly) rectfill(x,ly,x,prev_ly,8) prev_ly=ly
+						--if(prev_ry)	rectfill(x,ry,x,prev_ry,0) prev_ry=ry	
+						ly+=ldy
+						ry+=rdy
+					end
+				else
+					--data for left & right edges:
+					local np,lj,rj,ly,ry,lx,ldx,rx,rdx=#p,mini,mini,miny-1,miny-1
+					local prev_lx,prev_rx
+					--step through scanlines.
+					for y=max(0,miny\1+1),min(127,maxy) do
+						--maybe update to next vert
+						while ly<y do
+							local v0=p[lj]
+							lj+=1
+							if (lj>np) lj=1
+							local v1=p[lj]
+							local y0,y1=v0[2],v1[2]
+							ly=y1&-1
+							lx=v0[1]
+							prev_lx=lx
+							ldx=(v1[1]-lx)/(y1-y0)
+							--sub-pixel correction
+							lx+=(y-y0)*ldx
+						end   
+						while ry<y do
+							local v0=p[rj]
+							rj-=1
+							if (rj<1) rj=np
+							local v1=p[rj]
+							local y0,y1=v0[2],v1[2]
+							ry=y1&-1
+							rx=v0[1]
+							prev_rx=rx
+							rdx=(v1[1]-rx)/(y1-y0)
+							--sub-pixel correction
+							rx+=(y-y0)*rdx
+						end
+						rectfill(lx,y,rx,y)
+						-- if(prev_lx) rectfill(lx,y,prev_lx,y,0) prev_lx=lx
+						-- if(prev_rx) rectfill(rx,y,prev_rx,y,0) prev_rx=rx
 
+						--pset(lx,y,0)
+						--pset(rx,y,0)
+						lx+=ldx
+						rx+=rdx
+					end
+					--if(prev_lx and prev_rx) rectfill(prev_lx,maxy,prev_rx,maxy,1)
+				end
+
+				-- edges
+				if true then
+					color(0)
+					local nv=#p
+					for i,p1 in pairs(p) do
+						local p0=p[i%nv+1]
+						local x0,y0,x1,y1=p0[1],p0[2],p1[1],p1[2]
+						if abs(x1-x0)<abs(y1-y0) then
+							-- x major (smallest)
+							if(x0>x1) x0,y0,x1,y1=x1,y1,x0,y0
+							local cx0,dy=x0\1+1,(y1-y0)/(x1-x0)
+							if(x1-cx0>=1) rectfill(x0,y0,x0,y0+(cx0-x0)*dy) y0+=(cx0-x0)*dy
+							--for x=cx0,x1 do
+							--	pset(x,y0)
+							--	y0+=dy
+							--end						
+							line(x0,y0-0.5,x1,y1-0.5)
+						else
+							-- y major
+							if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+							local cy0,dx=y0\1+1,(x1-x0)/(y1-y0)
+							if(y1-cy0>=1) rectfill(x0,y0,x0+(cy0-y0)*dx,y0) x0+=(cy0-y0)*dx	
+							--for y=cy0,y1 do
+							--	pset(x0,y)
+							--	x0+=dx
+							--end
+							line(x0-0.5,y0,x1-0.5,y1)
+						end
+					end
+				end
+			end
+			poly={}
+		end
+}
+end
+
+-->8
+-- textured
+function tex_rasterizer()
+	local poly={}
+	
+	return {
+		name="textured",
+		-- add edge
+		add=function(self,verts,c,z)
+			add(poly,{v=verts,c=c,w=1/z})
+		end,
+		draw=function(self)
+			local uv={{0,0},{2,0},{2,2},{0,2}}
+			for k=1,#poly do
+				local p=poly[k]
+				local w,p=p.w,p.v
+
+				local miny,maxy,minx,maxx,mini,minix=32000,-32000,32000,-32000
+				local lu,lv,lw
+				-- find extent
+				for i,v in pairs(p) do
+					local x,y=v[1],v[2]
+					if (x<minx) minix,minx,lu,lv,lw=i,x,uv[i][1],uv[i][2],w
+					if (x>maxx) maxx=x
+					if (y<miny) mini,miny=i,y
+					if (y>maxy) maxy=y
+				end
+
+				-- 
+				local ru,rv,rw=lu,lv,lw
+
+				-- find smallest iteration area
+				if abs(minx-maxx)<abs(miny-maxy) then
+					--data for left and right edges:
+					local np,lj,rj,lx,rx,ly,ldy,ry,rdy=#p,minix,minix,minx-1,minx-1				
+					
 					--step through scanlines.
 					for x=max(0,minx\1+1),min(maxx,127) do
 						--maybe update to next vert
 						while lx<x do
-							li=lj
+							local li=lj
 							lj+=1
 							if (lj>np) lj=1
 							local v0,v1=p[li],p[lj]
 							local x0,x1=v0[1],v1[1]
-							lx=x1\1
+							lx=x1&-1
 							ly=v0[2]
 							ldy=(v1[2]-ly)/(x1-x0)
 							--sub-pixel correction
 							ly+=(x-x0)*ldy
 						end   
 						while rx<x do
-							ri=rj
+							local ri=rj
 							rj-=1
 							if (rj<1) rj=np
 							local v0,v1=p[ri],p[rj]
 							local x0,x1=v0[1],v1[1]
-							rx=x1\1
+							rx=x1&-1
 							ry=v0[2]
 							rdy=(v1[2]-ry)/(x1-x0)
 							--sub-pixel correction
@@ -580,30 +766,30 @@ function foley_rasterizer()
 					end
 				else
 					--data for left & right edges:
-					local np,li,lj,ri,rj,ly,ry,lx,ldx,rx,rdx=#p,mini,mini,mini,mini,miny-1,miny-1
+					local np,lj,rj,ly,ry,lx,ldx,rx,rdx=#p,mini,mini,miny-1,miny-1
 
 					--step through scanlines.
 					for y=max(0,miny\1+1),min(maxy,127) do
 						--maybe update to next vert
 						while ly<y do
-							li=lj
+							local li=lj
 							lj+=1
 							if (lj>np) lj=1
 							local v0,v1=p[li],p[lj]
 							local y0,y1=v0[2],v1[2]
-							ly=y1\1
+							ly=y1&-1
 							lx=v0[1]
 							ldx=(v1[1]-lx)/(y1-y0)
 							--sub-pixel correction
 							lx+=(y-y0)*ldx
 						end   
 						while ry<y do
-							ri=rj
+							local ri=rj
 							rj-=1
 							if (rj<1) rj=np
 							local v0,v1=p[ri],p[rj]
 							local y0,y1=v0[2],v1[2]
-							ry=y1\1
+							ry=y1&-1
 							rx=v0[1]
 							rdx=(v1[1]-rx)/(y1-y0)
 							--sub-pixel correction
@@ -621,22 +807,11 @@ function foley_rasterizer()
 		end
 }
 end
+
 -->8
 -- poke-based2 rasterizer
 function poke_rasterizer()
 	local poly={}
-	
-	local cache_cls={
-		__index=function(t,k)
-			local f=function(a)
-				t[k]=function(b)
-					rectfill(a,k,b,k)
-				end
-			end  
-			--t[k]=f
-			return f
-		end
-	}
 	return {
 	name="memset",
 	-- add edge
@@ -648,7 +823,6 @@ function poke_rasterizer()
 		local p=poly[k]
 		local v,c0,c1=p.v,p.c,p.c<<4
 		local c=c0|c1
-
 		local nv,spans=#v,{}
 		for i,p1 in pairs(v) do
 			local p0=v[i%nv+1]
@@ -954,15 +1128,18 @@ function convex_zbuf_rasterizer()
 end
 
 __gfx__
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00007700077000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00007700077000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000009999999977777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000009999999977777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000009999999977777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000009999999977777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000009999999977777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00007700077000009999999977777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00007700077000009999999977777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00000000000000009999999977777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000777777000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+__map__
+0203000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0302000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
