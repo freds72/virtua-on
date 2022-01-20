@@ -14,7 +14,9 @@ function _init()
 		--trifill_rasterizer,
 		--hybrid_rasterizer,
 		convex_rasterizer,
-		poke_rasterizer
+		--zerocache_rasterizer,
+		--poke_rasterizer
+		sbuffer_rasterizer,
 		--convex_zbuf_rasterizer
 	}
  --raz=edge_rasterizer()
@@ -48,8 +50,9 @@ function _update()
 	end
 
 	-- back
+	local angle_shift=0.1
 	for i=1,20 do
-		cc,ss=cos(angle+i*0.12),-sin(angle+i*0.12)
+		cc,ss=cos(angle+i*angle_shift),-sin(angle+i*angle_shift)
 		local x0,y0=rotate(24,24)
 		local x1,y1=rotate(96,24)
 		local x2,y2=rotate(96,112)
@@ -66,66 +69,6 @@ function _draw()
  rectfill(0,0,127,6,8)
  print(raz.name..": "..cpu.."%",2,1,7)
 end
-
--->8
--->8
--- #putaflipinit
-function cflip() if(slowflip)flip()
-end
-ospr=spr
-function spr(...)
-ospr(...)
-cflip()
-end
-osspr=sspr
-function sspr(...)
-osspr(...)
-cflip()
-end
-omap=map
-function map(...)
-omap(...)
-cflip()
-end
-orect=rect
-function rect(...)
-orect(...)
-cflip()
-end
-orectfill=rectfill
-function rectfill(...)
-orectfill(...)
-cflip()
-end
-ocircfill=circfill
-function circfill(...)
-ocircfill(...)
-cflip()
-end
-ocirc=circ
-function circ(...)
-ocirc(...)
-cflip()
-end
-oline=line
-function line(...)
-oline(...)
-cflip()
-end
-opset=pset
-psetctr=0
-function pset(...)
-opset(...)
-psetctr+=1
-if(slowflip and psetctr%4==0)flip()
-end
-odraw=_draw
-function _draw()
-if(slowflip)extcmd("rec")
-odraw()
-if(slowflip)for i=0,99 do flip() end extcmd("video")cls()stop("gif saved")
-end
-menuitem(1,"put a flip in it!",function() slowflip=not slowflip end)
 
 -->8
 -- edge rasterizer
@@ -461,17 +404,6 @@ end
 function convex_rasterizer()
 	local poly={}
 	
-	local cache_cls={
-		__index=function(t,k)
-			local f=function(a)
-				t[k]=function(b)
-					rectfill(a,k,b,k)
-				end
-			end  
-			--t[k]=f
-			return f
-		end
-	}
 	return {
 	name="edge+sub-pix",
 	-- add edge
@@ -493,11 +425,11 @@ function convex_rasterizer()
 			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
 			local cy0,cy1,dx=y0\1+1,y1\1,(x1-x0)/(y1-y0)
 			if(y0<0) x0-=y0*dx y0=0
-   		x0+=(-y0+cy0)*dx
+   			x0+=(-y0+cy0)*dx
 			for y=cy0,min(cy1,127) do
 				local x=nodes[y]
 				if x then
-				 rectfill(x,y,x0,y)
+					rectfill(x0,y,x,y)
 				else
 				 nodes[y]=x0
 				end
@@ -505,6 +437,45 @@ function convex_rasterizer()
 			end			
 			--break
 			x0,y0=_x1,_y1
+		end
+  	end
+  	poly={}
+end
+}
+end
+
+-->8
+-- no cache rasterizer
+function zerocache_rasterizer()
+	local poly={}
+	
+	return {
+	name="0-cache edge+sub-pix",
+	-- add edge
+	add=function(self,verts,c,z)
+		add(poly,{v=verts,c=c})
+	end,
+ draw=function(self)
+	for k=1,#poly do
+		local p=poly[k]
+		local points=p.v
+  		color(p.c)
+		local np,x_array=#points,{}
+		for k,v in pairs(points) do
+			local p2=points[k%np+1]
+			local x1,y1,x2,y2=v[1],v[2],p2[1],p2[2]
+			if y1>y2 then
+				y1,y2,x1,x2=y2,y1,x2,x1
+			end 
+			local dy,dx=y2-y1,x2-x1
+			for y=y1\1+1,y2 do
+				local x,x0=x1+dx*(y-y1)/dy,x_array[y]
+				if x0 then
+					rectfill(x0,y,x,y)
+				else
+					x_array[y]=x
+				end
+			end
 		end
   	end
   	poly={}
@@ -548,7 +519,7 @@ function poke_rasterizer()
 			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
 			local cy0,cy1,dx=y0\1+1,y1\1,(x1-x0)/(y1-y0)
 			if(y0<0) x0-=y0*dx y0=0
-   		x0+=(-y0+cy0)*dx
+   			x0+=(-y0+cy0)*dx
 			for y=cy0,min(cy1,127) do
 				local x=nodes[y]
 				if x then
@@ -719,6 +690,158 @@ function convex_zbuf_rasterizer()
 		screen=setmetatable({},screen_cls)
 	end
 }
+end
+
+-->8
+-- hybrid rasterizer
+function sbuffer_rasterizer()
+	local poly={}
+	
+	local spans={}
+	local function span(y,x0,x1)
+		-- sort
+		-- rectfill(x0,y,x1,y,7)
+		x0=x0\1
+		x1=x1\1-1
+		if(x1-x0<0) return
+		--rectfill(x0,y,x1,y,8)
+		local span,old=spans[y]
+		-- empty scanline?
+		if not span then
+			rectfill(x0,y,x1,y)
+			spans[y]={x0=x0,x1=x1}
+			return
+		end
+		while span do
+			if span.x0>x0 then
+				-- nnnn
+				--       xxxxxx	
+				if span.x0>x1 then
+					-- fully visible
+					rectfill(x0,y,x1,y)
+					local n={x0=x0,x1=x1,next=span}
+					if old then 
+						old.next=n
+					else
+						spans[y]=n
+					end
+					return
+				end
+
+				-- nnnn?????????
+				--     xxxxxxx
+				local x2=span.x0-1
+				if x2-x0>=0 then
+					rectfill(x0,y,x2,y)
+					local n={x0=x0,x1=x2,next=span}
+					if old then 
+						old.next=n
+					else
+						spans[y]=n
+					end
+				end
+				if span.x1>=x1 then
+					-- ////nn?????
+					--     xxxxxxx	
+					-- left overlapping
+					return
+				else
+					-- ?????????nnnn
+					--     xxxxxxx	
+					-- test against other spans
+					x0=span.x1+1
+					if(x1-x0<0) return
+				end
+			else
+				if span.x1>=x1 then
+					--     ??nnnn?
+					--     xxxxxxx	
+					-- totally hidden
+					return
+				end
+
+				if span.x1<x0 then
+					--            nnnn
+					--     xxxxxxx	
+					-- continue
+				else
+					--     ?????nnnnn
+					--     xxxxxxx	
+					-- test against other spans
+					x0=span.x1+1
+					if(x1-x0<0) return
+				end
+			end
+::continue::
+			old=span	
+			span=span.next
+		end
+		-- new last?
+		if x1-x0>=0 then
+			rectfill(x0,y,x1,y)
+			old.next={x0=x0,x1=x1}
+		end
+	end
+
+	return {
+		name="s-buffer",
+		-- add edge
+		add=function(self,verts,c,z)
+			add(poly,{v=verts,c=c})
+		end,
+		draw=function(self)
+			for k=1,#poly do
+				local p=poly[k]
+				color(p.c)
+				p=p.v
+				local np,miny,maxy,mini=#p,32000,-32000
+				-- find extent
+				for i=1,np do
+					local y=p[i][2]
+					if (y<miny) mini,miny=i,y
+					if (y>maxy) maxy=y
+				end
+
+				--data for left & right edges:
+				local lj,rj,ly,ry,lx,ldx,rx,rdx=mini,mini,miny,miny
+				--step through scanlines.
+				if(maxy>127) maxy=127
+				if(miny<0) miny=-1
+				for y=1+miny&-1,maxy do
+					--maybe update to next vert
+					while ly<y do
+						local v0=p[lj]
+						lj+=1
+						if (lj>np) lj=1
+						local v1=p[lj]
+						local y0,y1=v0[2],v1[2]
+						ly=y1&-1
+						lx=v0[1]
+						ldx=(v1[1]-lx)/(y1-y0)
+						--sub-pixel correction
+						lx+=(y-y0)*ldx
+					end   
+					while ry<y do
+						local v0=p[rj]
+						rj-=1
+						if (rj<1) rj=np
+						local v1=p[rj]
+						local y0,y1=v0[2],v1[2]
+						ry=y1&-1
+						rx=v0[1]
+						rdx=(v1[1]-rx)/(y1-y0)
+						--sub-pixel correction
+						rx+=(y-y0)*rdx
+					end
+					span(y,rx,lx)
+					lx+=ldx
+					rx+=rdx
+				end
+			end
+			poly={}
+			spans={}
+		end
+	}
 end
 
 __gfx__
