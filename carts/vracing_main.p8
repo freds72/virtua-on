@@ -973,7 +973,7 @@ function play_state(checkpoints,cam_checkpoints)
 	plyr=add(actors,make_plyr(track.start_pos,0,make_track(track.segments)))
 
 	-- init npc's
-
+	--[[
 	for i=0,6 do
 		local npc_track=make_track(track.segments,8*i)
 		local _,l,r=npc_track:get_next()
@@ -987,6 +987,7 @@ function play_state(checkpoints,cam_checkpoints)
 			[0x10bb.a5a5]=bor(0x1000.a5a5,peek(mem+1))}
 		npc.spr=37+(i%4)
 	end
+	]]
 	
 	-- reset cam	
 	cam=make_cam()
@@ -1740,42 +1741,53 @@ function unpack_track(track_id)
 end
 
 -->8
--- edge rasterizer
+-- foley rasterizer
 function polyfill(p,col)
+	--find top & bottom of poly
+	local np,miny,maxy,mini=#p,32000,-32000
+	for i=1,np do
+		local y=p[i].y
+		if (y<miny) mini,miny=i,y
+		if (y>maxy) maxy=y
+	end
+	if(not mini) return
 	color(col)
-	local p0,nodes=p[#p],{}
-	local x0,y0=p0.x,p0.y
+	--data for left & right edges:
+	local li,lj,ri,rj,ly,ry,lx,ldx,rx,rdx=mini,mini,mini,mini,miny-1,miny-1
 
-	for i=1,#p do
-		local p1=p[i]
-		local x1,y1=p1.x,p1.y
-		-- backup before any swap
-		local _x1,_y1=x1,y1
-		if(y0>y1) x1=x0 y1=y0 x0=_x1 y0=_y1
-		-- exact slope
-		local dx=(x1-x0)/(y1-y0)
-		if(y0<0) x0-=y0*dx y0=0
-		-- subpixel shifting (after clipping)
-		local cy0=y0\1+1
-		x0+=(cy0-y0)*dx
-		for y=cy0,min(y1,127) do
-			local x=nodes[y]
-			if x then
-				local x0=x0
-				rectfill(x,y,x0,y)
-				if (x0|x)&0xff7f!=0 then
-					_map_display(1)
-					rectfill(x-127,y,x0-127,y)
-					_map_display(0)
-				end
-			else
-				nodes[y]=x0
-			end
-			x0+=dx
+	--step through scanlines.
+	for y=max(0,miny\1+1),min(maxy,127) do
+		--maybe update to next vert
+		while ly<y do
+			li,lj=lj,lj+1
+			if (lj>np) lj=1
+			local v0,v1=p[li],p[lj]
+			local y0,y1=v0.y,v1.y
+			ly=y1&-1
+			lx=v0.x
+			ldx=(v1.x-lx)/(y1-y0)
+			--sub-pixel correction
+			lx+=(y-y0)*ldx
+		end   
+		while ry<y do
+			ri,rj=rj,rj-1
+			if (rj<1) rj=np
+			local v0,v1=p[ri],p[rj]
+			local y0,y1=v0.y,v1.y
+			ry=y1&-1
+			rx=v0.x
+			rdx=(v1.x-rx)/(y1-y0)
+			--sub-pixel correction
+			rx+=(y-y0)*rdx
 		end
-		-- next vertex
-		x0=_x1
-		y0=_y1
+		rectfill(lx,y,rx,y)
+		if (lx|rx)&0xff7f!=0 then
+			_map_display(1)
+			rectfill(lx-127,y,rx-127,y)
+			_map_display(0)
+		end
+		lx+=ldx
+		rx+=rdx
 	end
 end
 
