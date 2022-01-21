@@ -410,37 +410,57 @@ function convex_rasterizer()
 	add=function(self,verts,c,z)
 		add(poly,{v=verts,c=c})
 	end,
- draw=function(self)
-	for k=1,#poly do
-		local p=poly[k]
-		local v=p.v
-  		color(p.c)
+ 	draw=function(self)
+		for k=1,#poly do
+			local p=poly[k]
+			color(p.c)
+			p=p.v
+			local np,miny,maxy,mini=#p,32000,-32000
+			-- find extent
+			for i=1,np do
+				local y=p[i][2]
+				if (y<miny) mini,miny=i,y
+				if (y>maxy) maxy=y
+			end
 
-		local v0,nodes=v[#v],{} -- setmetatable({},cache_cls)
-		local x0,y0=v0[1],v0[2]
-		for i=1,#v do
-			local v1=v[i]
-			local x1,y1=v1[1],v1[2]
-			local _x1,_y1=x1,y1
-			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
-			local cy0,cy1,dx=y0\1+1,y1\1,(x1-x0)/(y1-y0)
-			if(y0<0) x0-=y0*dx y0=0
-   			x0+=(-y0+cy0)*dx
-			for y=cy0,min(cy1,127) do
-				local x=nodes[y]
-				if x then
-					rectfill(x0,y,x,y)
-				else
-				 nodes[y]=x0
+			--data for left & right edges:
+			local lj,rj,ly,ry,lx,ldx,rx,rdx=mini,mini,miny,miny
+			--step through scanlines.
+			if(maxy>127) maxy=127
+			if(miny<0) miny=-1
+			for y=1+miny&-1,maxy do
+				--maybe update to next vert
+				while ly<y do
+					local v0=p[lj]
+					lj+=1
+					if (lj>np) lj=1
+					local v1=p[lj]
+					local y0,y1=v0[2],v1[2]
+					ly=y1&-1
+					lx=v0[1]
+					ldx=(v1[1]-lx)/(y1-y0)
+					--sub-pixel correction
+					lx+=(y-y0)*ldx
+				end   
+				while ry<y do
+					local v0=p[rj]
+					rj-=1
+					if (rj<1) rj=np
+					local v1=p[rj]
+					local y0,y1=v0[2],v1[2]
+					ry=y1&-1
+					rx=v0[1]
+					rdx=(v1[1]-rx)/(y1-y0)
+					--sub-pixel correction
+					rx+=(y-y0)*rdx
 				end
-				x0+=dx					
-			end			
-			--break
-			x0,y0=_x1,_y1
+				rectfill(rx,y,lx,y)
+				lx+=ldx
+				rx+=rdx
+			end
 		end
-  	end
-  	poly={}
-end
+		poly={}		
+	end
 }
 end
 
