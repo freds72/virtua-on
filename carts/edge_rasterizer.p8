@@ -14,9 +14,11 @@ function _init()
 		--trifill_rasterizer,
 		--hybrid_rasterizer,
 		convex_rasterizer,
+		edgewalk_rasterizer,
 		--zerocache_rasterizer,
-		--poke_rasterizer
-		sbuffer_rasterizer,
+		--poke_rasterizer,
+		--sbuffer_rasterizer,
+		polygon148_rasterizer,
 		--convex_zbuf_rasterizer
 	}
  --raz=edge_rasterizer()
@@ -41,6 +43,7 @@ function _update()
 	end
 	 
 	angle+=0.001
+	--angle=0
 	local cc,ss=cos(angle),-sin(angle)
 	local scale=0.8
 	local function rotate(x,y)
@@ -51,7 +54,7 @@ function _update()
 
 	-- back
 	local angle_shift=0.1
-	for i=1,20 do
+	for i=1,10 do
 		cc,ss=cos(angle+i*angle_shift),-sin(angle+i*angle_shift)
 		local x0,y0=rotate(24,24)
 		local x1,y1=rotate(96,24)
@@ -424,13 +427,15 @@ function convex_rasterizer()
 			end
 
 			--data for left & right edges:
+			miny=miny&-1
+			maxy=(maxy&-1)-1
 			local lj,rj,ly,ry,lx,ldx,rx,rdx=mini,mini,miny,miny
 			--step through scanlines.
 			if(maxy>127) maxy=127
-			if(miny<0) miny=-1
-			for y=1+miny&-1,maxy do
+			if(miny<0) miny=0
+			for y=miny,maxy do
 				--maybe update to next vert
-				while ly<y do
+				while ly<=y do
 					local v0=p[lj]
 					lj+=1
 					if (lj>np) lj=1
@@ -440,9 +445,9 @@ function convex_rasterizer()
 					lx=v0[1]
 					ldx=(v1[1]-lx)/(y1-y0)
 					--sub-pixel correction
-					lx+=(y-y0)*ldx
+					lx+=(1-(y0&0x0.ffff))*ldx
 				end   
-				while ry<y do
+				while ry<=y do
 					local v0=p[rj]
 					rj-=1
 					if (rj<1) rj=np
@@ -452,7 +457,7 @@ function convex_rasterizer()
 					rx=v0[1]
 					rdx=(v1[1]-rx)/(y1-y0)
 					--sub-pixel correction
-					rx+=(y-y0)*rdx
+					rx+=(1-(y0&0x0.ffff))*rdx
 				end
 				rectfill(rx,y,lx,y)
 				lx+=ldx
@@ -715,91 +720,141 @@ end
 -->8
 -- hybrid rasterizer
 function sbuffer_rasterizer()
-	local poly={}
-	
-	local spans={}
-	local function span(y,x0,x1)
-		-- sort
-		-- rectfill(x0,y,x1,y,7)
-		x0=x0\1
-		x1=x1\1-1
-		if(x1-x0<0) return
-		--rectfill(x0,y,x1,y,8)
-		local span,old=spans[y]
+	local poly={}	
+	local _spans={}
+	local function spanfill(x0,x1,y,u,v,w,du,dv,dw,fn)	
+		if(x1<0 or x0>127 or x1-x0<0) return
+		local span,old=_spans[y]
 		-- empty scanline?
 		if not span then
-			rectfill(x0,y,x1,y)
-			spans[y]={x0=x0,x1=x1}
+			fn(x0,y,x1,y,u,v,w,du,dv,dw)
+			_spans[y]={x0=x0,x1=x1,w=w,dw=dw}
 			return
 		end
 		while span do
-			if span.x0>x0 then
-				-- nnnn
-				--       xxxxxx	
-				if span.x0>x1 then
+			local s0,s1=span.x0,span.x1
+			
+			if s0>x0 then
+				if s0>x1 then
+					-- nnnn
+					--       xxxxxx	
 					-- fully visible
-					rectfill(x0,y,x1,y)
-					local n={x0=x0,x1=x1,next=span}
-					if old then 
+					fn(x0,y,x1,y,u,v,w,du,dv,dw)
+					local n={x0=x0,x1=x1,w=w,dw=dw,next=span}
+					if old then
+						-- chain to previous
 						old.next=n
 					else
-						spans[y]=n
+						-- new first
+						_spans[y]=n
 					end
 					return
 				end
 
 				-- nnnn?????????
 				--     xxxxxxx
-				local x2=span.x0-1
-				if x2-x0>=0 then
-					rectfill(x0,y,x2,y)
-					local n={x0=x0,x1=x2,next=span}
-					if old then 
-						old.next=n
-					else
-						spans[y]=n
-					end
-				end
-				if span.x1>=x1 then
-					-- ////nn?????
-					--     xxxxxxx	
-					-- left overlapping
-					return
+				-- clip + display left
+				local x2=s0-1
+				local dx=x2-x0
+				fn(x0,y,x2,y,u,v,w,du,dv,dw)
+				local n={x0=x0,x1=x2,w=w,dw=dw,next=span}
+				if old then 
+					old.next=n				
 				else
-					-- ?????????nnnn
-					--     xxxxxxx	
-					-- test against other spans
-					x0=span.x1+1
-					if(x1-x0<0) return
+					_spans[y]=n
 				end
-			else
-				if span.x1>=x1 then
-					--     ??nnnn?
-					--     xxxxxxx	
-					-- totally hidden
-					return
+				x0=s0
+				--assert(x1-x0>=0,"empty right seg")
+				u+=dx*du
+				v+=dx*dv
+				w+=dx*dw
+				-- check remaining segment
+				old=n
+				goto continue
+			elseif s1>=x0 then
+				--     ??nnnn????
+				--     xxxxxxx	
+
+				--     ??nnnn?
+				--     xxxxxxx	
+				-- totally hidden (or not!)
+				local dx,sdw=x0-s0+1,span.dw
+				local sw=span.w+dx*sdw		
+				
+				if sw<w or (sw==w and dw>sdw) then
+					--printh(sw.."("..dx..") "..w.." w:"..span.dw.."<="..dw)	
+					-- insert (left) clipped existing span as a "new" span
+					if dx>0 then
+						local n={
+							x0=s0,
+							x1=x0-1,
+							w=span.w,
+							dw=sdw,
+							next=span}	
+						if old then
+							old.next=n
+						else
+							_spans[y]=n
+						end
+						old=n
+					end
+					-- middle ("new")
+					local x2=x1
+					if s1<x1 then
+						--     ??nnnnn???
+						--     xxxxxxx			
+						-- draw only up to s1
+						x2=s1
+					end
+					fn(x0,y,x2,y,u,v,w,du,dv,dw)					
+					local n={x0=x0,x1=x2,w=w,dw=dw,next=span}
+					if old then 
+						old.next=n				
+					else
+						_spans[y]=n
+					end
+					
+					-- any remaining "right" from current span?
+					if s1-x1-1>=0 then
+						-- "shrink" current span
+						span.x0=x1+1
+						span.w+=(x1+1-s0)*sdw
+					else
+						-- drop current span
+						n.next=span.next
+						span=n
+					end					
 				end
 
-				if span.x1<x0 then
-					--            nnnn
+				if s1>=x1 then
+					--     ///////
 					--     xxxxxxx	
-					-- continue
-				else
-					--     ?????nnnnn
-					--     xxxxxxx	
-					-- test against other spans
-					x0=span.x1+1
-					if(x1-x0<0) return
+					return
 				end
+				--         ///nnn
+				--     xxxxxxx
+				-- clip incomping segment
+				--assert(dx>=0,"empty right (incoming) seg")
+				-- 
+				local dx=s1+1-x0
+				x0=s1+1
+				u+=dx*du
+				v+=dx*dv
+				w+=dx*dw
+
+				--            nnnn
+				--     xxxxxxx	
+				-- continue + test against other spans
 			end
-::continue::
 			old=span	
 			span=span.next
+	::continue::
 		end
 		-- new last?
 		if x1-x0>=0 then
-			rectfill(x0,y,x1,y)
-			old.next={x0=x0,x1=x1}
+			fn(x0,y,x1,y,u,v,w,du,dv,dw)
+			-- end of spans
+			old.next={x0=x0,x1=x1,w=w,dw=dw}
 		end
 	end
 
@@ -812,7 +867,7 @@ function sbuffer_rasterizer()
 		draw=function(self)
 			for k=1,#poly do
 				local p=poly[k]
-				color(p.c)
+				local c=p.c
 				p=p.v
 				local np,miny,maxy,mini=#p,32000,-32000
 				-- find extent
@@ -853,17 +908,116 @@ function sbuffer_rasterizer()
 						--sub-pixel correction
 						rx+=(y-y0)*rdx
 					end
-					span(y,rx,lx)
+
+					-- todo: faster to clip polygon?
+					local x0,x1=rx,lx
+					if(x0<0) x0=0
+					if(x1>128) x1=128
+					spanfill(x0&-1,(x1&-1)-1,y,c,0,-k,0,0,0,rectfill)
+					
 					lx+=ldx
 					rx+=rdx
 				end
 			end
 			poly={}
-			spans={}
+			_spans={}
 		end
 	}
 end
 
+-->8
+-- Paranoid Cactus small rasterizer
+function polygon148_rasterizer()
+	local poly={}
+	
+	local cache_cls={
+		__index=function(t,k)
+			local f=function(a)
+				t[k]=function(b)
+					rectfill(a,k,b,k)
+				end
+			end  
+			--t[k]=f
+			return f
+		end
+	}
+	return {
+	name="polygon148",
+	-- add edge
+	add=function(self,verts,c,z)
+		add(poly,{v=verts,c=c})
+	end,
+ 	draw=function(self)
+		for k=1,#poly do
+			local p=poly[k]
+			local points=p.v
+			color(p.c)
+			local xl,xr,ymin,ymax={},{},129,0xffff
+			for k,v in pairs(points) do
+				local p2=points[k%#points+1]
+				local x1,y1,x2,y2=v[1],flr(v[2]),p2[1],flr(p2[2])
+				if y1>y2 then
+					y1,y2,x1,x2=y2,y1,x2,x1
+				end
+				local d=y2-y1
+				for y=y1,y2 do
+					local xval=flr(x1+(x2-x1)*(d==0 and 1 or (y-y1)/d))
+					xl[y],xr[y]=min(xl[y] or 32767,xval),max(xr[y] or 0x8001,xval)
+				end
+				ymin,ymax=min(y1,ymin),max(y2,ymax)
+			end
+			for y=ymin,ymax do
+				rectfill(xl[y],y,xr[y],y)
+			end
+		end
+  		poly={}
+	end
+}
+end
+
+-->8
+-- hybrid rasterizer
+function edgewalk_rasterizer()
+	local poly={}
+
+	return {
+	name="edgewalk",
+	-- add edge
+	add=function(self,verts,c,z)
+		add(poly,{v=verts,c=c})
+	end,
+ draw=function(self)
+	for k=1,#poly do
+		local p=poly[k]
+		local v=p.v
+  		color(p.c)
+
+		local v0,nodes=v[#v],{}
+		local x0,y0=v0[1],v0[2]
+		for i=1,#v do
+			local v1=v[i]
+			local x1,y1=v1[1],v1[2]
+			local _x1,_y1=x1,y1
+			if(y0>y1) x0,y0,x1,y1=x1,y1,x0,y0
+			local dx=(x1-x0)/(y1-y0)
+			if(y0<0) x0-=y0*dx y0=0
+			x0+=(1-(y0&0x0.ffff))*dx
+			for y=y0\1,min(y1\1-1,128) do
+				local x=nodes[y]
+				if x then
+					rectfill(x,y,x0,y)
+				else
+					nodes[y]=x0
+				end
+				x0+=dx
+			end
+			x0,y0=_x1,_y1
+		end
+  	end
+  	poly={}
+end
+}
+end
 __gfx__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
