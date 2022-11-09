@@ -14,12 +14,13 @@ function _init()
 		--trifill_rasterizer,
 		--hybrid_rasterizer,
 		convex_rasterizer,
-		edgewalk_rasterizer,
+		--edgewalk_rasterizer,
 		--zerocache_rasterizer,
 		--poke_rasterizer,
 		--sbuffer_rasterizer,
-		polygon148_rasterizer,
-		--convex_zbuf_rasterizer
+		--polygon148_rasterizer,
+		--convex_zbuf_rasterizer,
+		line_rasterizer
 	}
  --raz=edge_rasterizer()
  --raz=poly_rasterizer()
@@ -406,7 +407,7 @@ end
 -- hybrid rasterizer
 function convex_rasterizer()
 	local poly={}
-	
+
 	return {
 	name="edge+sub-pix",
 	-- add edge
@@ -462,6 +463,13 @@ function convex_rasterizer()
 				rectfill(rx,y,lx,y)
 				lx+=ldx
 				rx+=rdx
+			end
+			local x0,y0=p[#p][1],p[#p][2]
+			for i=1,#p do
+				local x1,y1=p[i][1],p[i][2]
+				line(x0,y0,x1-x0%1,y1-y0%1,0)
+				x0=x1
+				y0=y1
 			end
 		end
 		poly={}		
@@ -1018,6 +1026,89 @@ function edgewalk_rasterizer()
 end
 }
 end
+
+-->8
+-- line by line rasterizer
+-- 
+function line_rasterizer()
+	local polys,id={},0
+	
+	return {
+		name="line",
+		-- add edge
+		add=function(self,verts,c,z)
+			-- polygon
+			local miny,maxy,mini=32000,-32000
+			-- find extent
+			for i=1,#verts do
+				local y=verts[i][2]
+				if (y<miny) mini,miny=i,y
+				if (y>maxy) maxy=y
+			end
+			miny=miny&-1
+			maxy=(maxy&-1)-1
+			-- out of bounds?
+			if(maxy<0 or miny>127) return
+			if(maxy>127) maxy=127
+			if(miny<0) miny=0
+			local polys_at_line=polys[miny] or {}
+			polys_at_line[id]=setmetatable({lj=mini,rj=mini,ly=miny,ry=miny,lx=0,ldx=0,rx=0,rdx=0,maxy=maxy,col=c,v=verts,nv=#verts},{__index=_ENV})
+			polys[miny]=polys_at_line
+			id+=1
+		end,
+		draw=function(self)			 
+			local apl={}						
+			for y=0,127 do
+				-- add active polys
+				for id,p in pairs(polys[y]) do
+					apl[id]=p
+				end			
+				for id,p in pairs(apl) do
+					-- unpack data for left & right edges:
+					local _ENV=p
+					--maybe update to next vert
+					while ly<=y do
+						local v0=v[lj]
+						lj+=1
+						if (lj>nv) lj=1
+						local v1=v[lj]
+						local y0,y1=v0[2],v1[2]
+						ly=y1&-1
+						lx=v0[1]
+						ldx=(v1[1]-lx)/(y1-y0)
+						--sub-pixel correction
+						lx+=(1-(y0&0x0.ffff))*ldx
+					end   
+					while ry<=y do
+						local v0=v[rj]
+						rj-=1
+						if (rj<1) rj=nv
+						local v1=v[rj]
+						local y0,y1=v0[2],v1[2]
+						ry=y1&-1
+						rx=v0[1]
+						rdx=(v1[1]-rx)/(y1-y0)
+						--sub-pixel correction
+						rx+=(1-(y0&0x0.ffff))*rdx
+					end
+					rectfill(rx,y,lx,y,col)
+					-- was last line?
+					if y>=maxy then
+						apl[id]=nil
+					else
+						lx+=ldx
+						rx+=rdx
+					end
+				end
+			end	
+			for k in pairs(polys) do
+				polys[k]=nil
+			end
+			id=0	
+		end
+	}
+end
+
 __gfx__
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
