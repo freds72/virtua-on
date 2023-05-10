@@ -1036,7 +1036,7 @@ function play_state(checkpoints,cam_checkpoints)
 			if(extend_time_t>0 and extend_time_t%30<15) printr("extend time",nil,28,10,4)
 			
 			-- previous times
-			_map_display(1)
+			_map_display(2)
 			printb("lap time",95,2,7,0)
 			local y=9
 			for i=1,#laps do
@@ -1066,7 +1066,7 @@ function play_state(checkpoints,cam_checkpoints)
 			printr(ranks[rank] or "th",x0,11,10,9)
 
 			-- track map
-			_map_display(1)
+			_map_display(2)
 			local pos,angle=plyr:get_pos()
 			local cc,ss,track_outline=cos(angle),-sin(angle),track.segments
 			-- draw npc path
@@ -1299,15 +1299,15 @@ local v_cache_cls={
 	
 		local outcode=k_near
 		if(az>z_near) outcode=k_far
-		if(0.5*ax>az) outcode+=k_right
-		if(-0.5*ax>az) outcode+=k_left
+		if(0.25*ax>az) outcode+=k_right
+		if(-0.25*ax>az) outcode+=k_left
 
 		-- not faster :/
 		-- local bo=-(((az-z_near)>>31)<<17)-(((az-ax)>>31)<<18)-(((az+ax)>>31)<<19)
 		-- assert(bo==outcode,"outcode:"..outcode.." bits:"..bo)
 
 		-- assume vertex is visible, compute 2d coords
-		local a={ax,ay,az,outcode=outcode,clipcode=outcode&2,x=128+((ax/az)<<6),y=64-((ay/az)<<6)} 
+		local a={ax,ay,az,outcode=outcode,clipcode=outcode&2,x=192+((ax/az)<<6),y=64-((ay/az)<<6)} 
 		t[v]=a
 		return a
 	end
@@ -1436,7 +1436,7 @@ function _draw()
 	sessionid+=1
 
 	-- background
-	for s=1,0,-1 do
+	for s=2,0,-1 do
 		_map_display(s)
 		rectfill(0,0,127,63,track.sky_color)
 		rectfill(0,64,127,127,track.ground_color)
@@ -1754,9 +1754,11 @@ function polyfill(p,col)
 	color(col)
 	--data for left & right edges:
 	local li,lj,ri,rj,ly,ry,lx,ldx,rx,rdx=mini,mini,mini,mini,miny-1,miny-1
+	_map_display(1)
 
 	--step through scanlines.
-	for y=max(0,miny\1+1),min(maxy,127) do
+	if(maxy>127) maxy=127
+	for y=max(0,miny\1+1),maxy do
 		--maybe update to next vert
 		while ly<y do
 			li,lj=lj,lj+1
@@ -1780,12 +1782,29 @@ function polyfill(p,col)
 			--sub-pixel correction
 			rx+=(y-y0)*rdx
 		end
-		rectfill(lx,y,rx,y)
-		if (lx|rx)&0xff7f!=0 then
+		if lx>256 or rx>256 then
+			_map_display(2)
+			rectfill(lx-256,y,rx-256,y)
 			_map_display(1)
-			rectfill(lx-127,y,rx-127,y)
-			_map_display(0)
 		end
+		if lx<128 or rx<128 then
+			_map_display(0)
+			rectfill(lx,y,rx,y)
+			_map_display(1)
+		end
+		rectfill(lx-128,y,rx-128,y)
+		--[[
+		if lx>127 or rx>127 then
+			_map_display(2)
+			rectfill(lx-127,y,rx-127,y)
+			_map_display(1)
+		end
+		if lx<0 or rx<0 then
+			_map_display(0)
+			rectfill(lx-127,y,rx-127,y)
+			_map_display(1)
+		end
+		]]
 		lx+=ldx
 		rx+=rdx
 	end
@@ -1802,14 +1821,14 @@ function z_poly_clip(znear,v)
 		if d1>0 then
 			if d0<=0 then
 				local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-				nv.x=128+((nv[1]/nv[3])<<6)
+				nv.x=192+((nv[1]/nv[3])<<6)
 				nv.y=64-((nv[2]/nv[3])<<6)
 				res[#res+1]=nv
 			end
 			res[#res+1]=v1
 		elseif d0>0 then
 			local nv=v_lerp(v0,v1,d0/(d0-d1)) 
-			nv.x=128+((nv[1]/nv[3])<<6)
+			nv.x=192+((nv[1]/nv[3])<<6)
 			nv.y=64-((nv[2]/nv[3])<<6)
 			res[#res+1]=nv
 		end
@@ -1837,10 +1856,8 @@ function printb(s,x,y,c1,c2)
 		?s,x,y+1,c2 or 1
 		?s,x,y,c1
 	else
-		printb(s,128-(#s<<1),y,c1,c2)
 		_map_display(1)
-		printb(s,-(#s<<1),y,c1,c2)
-		_map_display(0)
+		printb(s,64-(#s<<1),y,c1,c2)
 	end
 end
 
@@ -1856,10 +1873,9 @@ function printr(s,x,y,c,c2)
 		if(c2) print(s,x,y,c2) y-=1
 		print(s,x,y,c)
 	else
-		printr(s,128-(#s<<1),y,c,c2)
 		_map_display(1)
-		printr(s,-(#s<<1),y,c,c2)
-		_map_display(0)
+		printr(s,64-(#s<<1),y,c,c2)
+		--printr(s,-(#s<<1),y,c,c2)
 	end
 end
 
@@ -1880,9 +1896,8 @@ function printf(s,x,y,font)
 		palt()
 		return x
 	else
-		printf(s,128+(#s*w>>1),y,font)	
 		_map_display(1)
-		printf(s,#s*w>>1,y,font)	
+		printf(s,64+(#s*w>>1),y,font)	
 		_map_display(0)
 		return #s*w 
 	end
@@ -1901,6 +1916,7 @@ end
 -- x centered
 -- perspective correct rotation by angle
 function print3d(sx,sy,sw,sh,y,angle)
+  _map_display(1)
 	local cc,ss=cos(angle),-sin(angle)
 	local z0,z1=2+cc,2-cc
 	-- projection

@@ -460,7 +460,7 @@ function title_state()
 			spr(231,2,120,2,1)
 			palt()
 
-			printb("tech demo #02",nil,20,8,2)
+			printb("widescreen mod",nil,20,8,2)
 
 	  		if(t%32<16) printb("❎🅾️ to start",nil,121,10,4)
 
@@ -692,6 +692,12 @@ function _init()
 	
 	-- init state machine	
 	push_state(title_state)
+
+	-- clear all screens
+	for s=0,2 do
+		_map_display(s)
+		cls()
+	end
 end
 
 function _update()
@@ -702,6 +708,9 @@ function _update()
 end
 
 function _draw()
+	-- use middle screen (wtf - doesn't work!!!)
+	_map_display(1)
+	
 	for state in all(states) do
 		state:draw()
 	end
